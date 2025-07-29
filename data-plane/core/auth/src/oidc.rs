@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use futures::executor::block_on;
 use jsonwebtoken_aws_lc::jwk::JwkSet;
-use jsonwebtoken_aws_lc::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use jsonwebtoken_aws_lc::{DecodingKey, Validation, decode, decode_header};
 use openidconnect::{
     ClientId, ClientSecret, IssuerUrl, OAuth2TokenResponse, Scope,
     core::{CoreClient, CoreProviderMetadata},
@@ -529,7 +529,7 @@ impl Verifier for OidcVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken_aws_lc::{Algorithm as JwtAlgorithm, EncodingKey, Header, encode};
+    use jsonwebtoken_aws_lc::{Algorithm, EncodingKey, Header, encode};
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -604,7 +604,7 @@ mod tests {
         let claims = TestClaims::new("user123", issuer_url.clone(), "test-audience");
 
         // Create JWT token without kid (since we have only one key)
-        let header = Header::new(JwtAlgorithm::RS256);
+        let header = Header::new(Algorithm::RS256);
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_bytes()).unwrap();
         let token = encode(&header, &claims, &encoding_key).unwrap();
 
@@ -641,7 +641,7 @@ mod tests {
                 .as_secs(),
         };
 
-        let header = Header::new(JwtAlgorithm::RS256);
+        let header = Header::new(Algorithm::RS256);
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_bytes()).unwrap();
         let token = encode(&header, &claims, &encoding_key).unwrap();
 
@@ -689,7 +689,7 @@ mod tests {
         };
 
         // Create token without kid in header - this should work with single key
-        let mut header = Header::new(JwtAlgorithm::RS256);
+        let mut header = Header::new(Algorithm::RS256);
         header.kid = None; // Explicitly remove kid
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_bytes()).unwrap();
         let token = encode(&header, &claims, &encoding_key).unwrap();
@@ -761,12 +761,12 @@ mod tests {
                 .as_secs(),
         };
 
-        let mut header = Header::new(JwtAlgorithm::RS256);
+        let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("test-key-id".to_string());
 
         // Use a dummy key for encoding (the test will fail at key type validation)
         // We need to use the proper algorithm for the encoding to work
-        let header = Header::new(JwtAlgorithm::HS256); // Use HS256 for symmetric key
+        let header = Header::new(Algorithm::HS256); // Use HS256 for symmetric key
         let encoding_key = EncodingKey::from_secret("dummy-secret".as_ref());
         let token = encode(&header, &claims, &encoding_key).unwrap();
 
@@ -812,7 +812,7 @@ mod tests {
         };
 
         // Create token with non-existent key ID
-        let mut header = Header::new(JwtAlgorithm::RS256);
+        let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("non-existent-key-id".to_string());
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_bytes()).unwrap();
         let token = encode(&header, &claims, &encoding_key).unwrap();
@@ -1057,7 +1057,7 @@ mod tests {
                 .as_secs(),
         };
 
-        let header = Header::new(JwtAlgorithm::RS256);
+        let header = Header::new(Algorithm::RS256);
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_bytes()).unwrap();
         let token = encode(&header, &claims, &encoding_key).unwrap();
 
