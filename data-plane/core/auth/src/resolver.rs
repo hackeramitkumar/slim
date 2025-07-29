@@ -35,9 +35,9 @@ struct ExtendedJwkSet {
 /// Cache entry for a JWKS.
 #[derive(Clone, Debug)]
 pub struct JwksCache {
-    jwks: JwkSet,
-    fetched_at: Instant,
-    ttl: Duration,
+    pub jwks: JwkSet,
+    pub fetched_at: Instant,
+    pub ttl: Duration,
 }
 
 /// This struct provides methods to resolve JWT decoding keys from various sources.
