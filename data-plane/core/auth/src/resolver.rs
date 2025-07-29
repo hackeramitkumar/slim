@@ -33,8 +33,8 @@ struct ExtendedJwkSet {
 }
 
 /// Cache entry for a JWKS.
-#[derive(Clone)]
-struct JwksCache {
+#[derive(Clone, Debug)]
+pub struct JwksCache {
     jwks: JwkSet,
     fetched_at: Instant,
     ttl: Duration,
