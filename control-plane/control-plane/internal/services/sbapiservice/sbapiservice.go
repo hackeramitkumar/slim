@@ -93,13 +93,20 @@ func (s *sbAPIService) OpenControlChannel(stream controllerapi.ControllerService
 	}
 
 	registeredNodeID := ""
+	registeredNodeHost := ""
+	registeredNodePort := uint32(0)
 
 	// Check for ControlMessage_RegisterNodeRequest
 	if regReq, ok := msg.Payload.(*controllerapi.ControlMessage_RegisterNodeRequest); ok {
 		registeredNodeID = regReq.RegisterNodeRequest.NodeId
+		registeredNodeHost = regReq.RegisterNodeRequest.Host
+		registeredNodePort = regReq.RegisterNodeRequest.Port
+
 		zlog.Info().Msgf("Registering node with ID: %v", registeredNodeID)
 		_, err = s.dbService.SaveNode(db.Node{
-			ID: registeredNodeID,
+			ID:   registeredNodeID,
+			Host: registeredNodeHost,
+			Port: uint32(registeredNodePort),
 		})
 		if err != nil {
 			zlog.Error().Msgf("Error saving node: %v", err)

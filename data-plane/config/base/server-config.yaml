@@ -1,8 +1,5 @@
-# Copyright AGNTCY Contributors (https://github.com/agntcy)
-# SPDX-License-Identifier: Apache-2.0
-
 tracing:
-  log_level: info
+  log_level: debug
   display_thread_names: true
   display_thread_ids: true
 
@@ -12,7 +9,7 @@ runtime:
   drain_timeout: 10s
 
 services:
-  slim/0:
+  slim/a:
     pubsub:
       servers:
         - endpoint: "0.0.0.0:46357"
@@ -21,7 +18,7 @@ services:
 
       clients: []
     controller:
-      servers:
-        - endpoint: "0.0.0.0:46358"
+      clients:
+        - endpoint: "http://127.0.0.1:50052"
           tls:
-            insecure: true
+            insecure: true 

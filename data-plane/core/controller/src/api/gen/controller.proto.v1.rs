@@ -138,6 +138,10 @@ pub struct Node {
 pub struct RegisterNodeRequest {
     #[prost(string, tag = "1")]
     pub node_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub host: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "3")]
+    pub port: u32,
 }
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct RegisterNodeResponse {

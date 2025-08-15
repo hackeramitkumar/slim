@@ -594,10 +594,45 @@ impl ControllerService {
 
             let mut retry_connect = false;
 
+            // Parse host and port from endpoint of form <scheme>://<host>:<port>
+            let (host_str, port_num) = if let Some(cfg) = &config {
+                // Accept endpoints without scheme by prefixing with dummy scheme to parse
+                let raw = cfg.endpoint.clone();
+                // Try parsing preserving existing scheme or adding http:// if missing
+                let parsed = if raw.contains("://") {
+                    raw.clone()
+                } else {
+                    format!("http://{}", raw)
+                };
+                match parsed.parse::<http::Uri>() {
+                    Ok(uri) => {
+                        let host = uri.host().unwrap_or("localhost").to_string();
+                        let port = uri
+                            .port_u16()
+                            .or_else(|| {
+                                if uri.scheme_str() == Some("https") {
+                                    Some(443)
+                                } else if uri.scheme_str() == Some("http") {
+                                    Some(80)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(8080);
+                        (host, port as u32)
+                    }
+                    Err(_) => ("localhost".to_string(), 8080),
+                }
+            } else {
+                ("localhost".to_string(), 8080)
+            };
+
             let register_request = ControlMessage {
                 message_id: uuid::Uuid::new_v4().to_string(),
                 payload: Some(Payload::RegisterNodeRequest(v1::RegisterNodeRequest {
                     node_id: this.inner.id.to_string(),
+                    host: host_str,
+                    port: port_num,
                 })),
             };
 

@@ -95,7 +95,7 @@ message ConnectionListResponse { repeated ConnectionEntry entries = 1; }
 
 message Node { string id = 1; }
 
-message RegisterNodeRequest { string nodeId = 1; }
+message RegisterNodeRequest { string nodeId = 1; string host = 2; uint32 port = 3; }
 
 message RegisterNodeResponse { bool success = 1; }
 
