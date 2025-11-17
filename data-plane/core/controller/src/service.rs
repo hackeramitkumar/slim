@@ -1487,6 +1487,9 @@ impl ControllerService {
                     tx.clone(),
                     cancellation_token.clone(),
                 );
+
+                // Send any queued notifications after successful connection
+                self.send_queued_notifications(&config.endpoint).await;
                 Ok(tx)
             }
 
