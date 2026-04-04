@@ -8,29 +8,61 @@ description = "Configuration utilities"
 [lib]
 name = "slim_config"
 
+[features]
+default = ["native"]
+native = [
+    "dep:duration-str",
+    "dep:futures",
+    "dep:http",
+    "dep:hyper-rustls",
+    "dep:hyper-util",
+    "dep:prost",
+    "dep:rustls",
+    "dep:rustls-native-certs",
+    "dep:rustls-pki-types",
+    "dep:tokio",
+    "dep:tonic",
+    "dep:tonic-tls",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:tower-layer",
+    "dep:tower-service",
+    "dep:fastwebsockets",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:tokio-rustls",
+]
+wasm = ["dep:gloo-net", "uuid/js"]
+
 [dependencies]
-duration-str = { workspace = true }
-futures = { workspace = true }
-http = { workspace = true }
-hyper-rustls = { workspace = true }
-hyper-util = { workspace = true }
+duration-str = { workspace = true, optional = true }
+fastwebsockets = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+gloo-net = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-rustls = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 lazy_static = { workspace = true }
-prost = { workspace = true }
+prost = { workspace = true, optional = true }
 regex = { workspace = true }
-rustls = { workspace = true }
-rustls-native-certs = { workspace = true }
-rustls-pki-types = { workspace = true }
-serde = { workspace = true }
+rustls = { workspace = true, optional = true }
+rustls-native-certs = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tonic = { workspace = true }
-tonic-tls = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-tower-layer = { workspace = true }
-tower-service = { workspace = true }
+tokio = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
+tonic-tls = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+tower-layer = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
 protoc-bin-vendored = { workspace = true }

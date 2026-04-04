@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SLIM MLS — Participant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login screen -->
+  <div id="login-screen" class="screen">
+    <div class="login-card">
+      <h1>SLIM MLS Group Chat</h1>
+      <p class="hint">Each browser tab is a separate participant.<br>Open multiple tabs to simulate a group.</p>
+      <div class="form-field">
+        <label for="input-name">Your Name</label>
+        <input type="text" id="input-name" placeholder="e.g. alice" autofocus />
+      </div>
+      <div class="form-field">
+        <label for="input-secret">Shared Secret</label>
+        <input type="text" id="input-secret" value="kjandjansdiasb8udaijdniasdaindasndasndasndasndasndasndasndas" />
+      </div>
+      <button id="btn-join">Join</button>
+    </div>
+  </div>
+
+  <!-- Main app screen -->
+  <div id="app-screen" class="screen" style="display:none;">
+    <nav>
+      <div class="nav-left">
+        <span class="brand">SLIM MLS</span>
+        <span class="identity" id="my-identity"></span>
+      </div>
+      <div class="nav-right">
+        <div id="peers-bar"></div>
+      </div>
+    </nav>
+
+    <div class="app-layout">
+      <!-- Sidebar -->
+      <aside id="sidebar">
+        <div class="sidebar-section">
+          <h3>Group</h3>
+          <div id="group-status" class="status-card">
+            <div class="status-row"><span class="lbl">Status</span><span id="g-status" class="val muted">No group</span></div>
+            <div class="status-row"><span class="lbl">Group ID</span><code id="g-id" class="val">—</code></div>
+            <div class="status-row"><span class="lbl">Epoch</span><code id="g-epoch" class="val">—</code></div>
+          </div>
+          <div class="sidebar-actions">
+            <button id="btn-create-group" class="primary">Create Group</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section" id="members-section" style="display:none;">
+          <h3>Members</h3>
+          <ul id="members-list" class="members"></ul>
+        </div>
+
+        <div class="sidebar-section" id="invite-section" style="display:none;">
+          <h3>Invite</h3>
+          <p class="hint small">Select an online peer to invite into this group.</p>
+          <select id="invite-select"></select>
+          <button id="btn-invite" class="secondary">Send Invite</button>
+        </div>
+
+        <div class="sidebar-section" id="advanced-section" style="display:none;">
+          <h3>Advanced</h3>
+          <button id="btn-rotate" class="secondary">Rotate My Credentials</button>
+        </div>
+      </aside>
+
+      <!-- Chat area -->
+      <section id="chat-area">
+        <div id="chat-messages"></div>
+        <div id="chat-input-bar" style="display:none;">
+          <input type="text" id="chat-input" placeholder="Type a message…" />
+          <button id="btn-send">Send</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Event log drawer -->
+    <details id="log-drawer">
+      <summary>Event Log</summary>
+      <div id="event-log"></div>
+    </details>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

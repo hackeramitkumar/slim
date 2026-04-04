@@ -9,7 +9,7 @@ license = { workspace = true }
 name = "slim_nop_component"
 
 [dependencies]
-agntcy-slim-config = { workspace = true }
+agntcy-slim-config = { workspace = true, features = ["native"] }
 serde = { workspace = true }
 
 [dev-dependencies]

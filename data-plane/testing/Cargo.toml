@@ -19,9 +19,9 @@ path = "src/bin/publisher.rs"
 
 [dependencies]
 agntcy-slim = { workspace = true }
-agntcy-slim-config = { workspace = true }
-agntcy-slim-datapath = { workspace = true }
-agntcy-slim-service = { workspace = true }
+agntcy-slim-config = { workspace = true, features = ["native"] }
+agntcy-slim-datapath = { workspace = true, features = ["native"] }
+agntcy-slim-service = { workspace = true, features = ["native"] }
 clap = { workspace = true }
 indicatif = { workspace = true }
 parking_lot = { workspace = true }

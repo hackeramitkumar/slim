@@ -1,0 +1,44 @@
+[package]
+name = "agntcy-slim-session"
+edition = { workspace = true }
+license = { workspace = true }
+version = "0.1.0"
+description = "Session management layer for SLIM data plane, supporting both native and WASM runtimes."
+
+[lib]
+name = "slim_session"
+
+[features]
+default = ["native"]
+native = [
+    "agntcy-slim-auth/native",
+    "agntcy-slim-datapath/native",
+    "dep:agntcy-slim-mls",
+    "dep:display-error-chain",
+    "dep:futures",
+    "dep:tonic",
+]
+wasm = [
+    "agntcy-slim-auth/wasm",
+    "agntcy-slim-datapath/wasm",
+    "dep:getrandom",
+]
+
+[dependencies]
+agntcy-slim-auth = { workspace = true, default-features = false }
+agntcy-slim-datapath = { workspace = true, default-features = false }
+agntcy-slim-mls = { workspace = true, default-features = false, optional = true }
+async-trait = { workspace = true }
+display-error-chain = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+parking_lot = { workspace = true }
+prost = { workspace = true }
+thiserror = { workspace = true }
+tokio_with_wasm = { workspace = true }
+tonic = { workspace = true, optional = true }
+tracing = { workspace = true }
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(mls_build_async)"]

@@ -1,0 +1,30 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+#
+# WebSocket server config with TLS (wss://)
+
+tracing:
+  log_level: debug
+  display_thread_names: true
+  display_thread_ids: true
+
+runtime:
+  n_cores: 0
+  thread_name: "slim-data-plane"
+  drain_timeout: 10s
+
+services:
+  slim/0:
+    pubsub:
+      servers: []
+      clients: []
+      websocket_servers:
+        - endpoint: "0.0.0.0:46357"
+          websocket_auth_query_param: token
+          shared_secret: "my-shared-secret"
+          tls:
+            insecure: false
+            cert_file: "testdata/server.crt"
+            key_file: "testdata/server.key"
+            ca_file: "testdata/ca.crt"
+      websocket_clients: []

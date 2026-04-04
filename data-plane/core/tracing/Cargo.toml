@@ -8,17 +8,38 @@ description = "Observability for SLIM data plane: logs, traces and metrics infra
 [lib]
 name = "slim_tracing"
 
+[features]
+default = ["native"]
+native = [
+    "dep:agntcy-slim-config",
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:opentelemetry-stdout",
+    "dep:opentelemetry_sdk",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+]
+wasm = [
+    "dep:tracing-subscriber",
+    "dep:getrandom",
+    "dep:web-sys",
+    "uuid/js",
+]
+
 [dependencies]
-agntcy-slim-config = { workspace = true }
+agntcy-slim-config = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
 once_cell = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry-semantic-conventions = { workspace = true }
-opentelemetry-stdout = { workspace = true }
-opentelemetry_sdk = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }
+opentelemetry-stdout = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 uuid = { workspace = true }
+web-sys = { workspace = true, optional = true }

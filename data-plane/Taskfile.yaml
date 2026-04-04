@@ -82,6 +82,25 @@ tasks:
     vars:
       TESTS: '{{.TESTS | default ""}}'
 
+  data-plane:check:config-wasm:
+    desc: "Check agntcy-slim-config compiles with wasm feature for wasm target"
+    cmds:
+      - cargo check --package agntcy-slim-config --no-default-features --features wasm --target wasm32-unknown-unknown --locked
+
+  data-plane:check:wasm:
+    desc: "Check all WASM-ready crates compile for wasm32-unknown-unknown"
+    cmds:
+      - task: data-plane:check:config-wasm
+      - cargo check -p agntcy-slim-auth --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-datapath --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-tracing --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-signal --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-mls --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-session --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-controller --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-service --target wasm32-unknown-unknown --no-default-features --features wasm --locked
+      - cargo check -p agntcy-slim-wasm --target wasm32-unknown-unknown --locked
+
   data-plane:slim:version:
     desc: "Get version from corresponding git tag"
     cmds:

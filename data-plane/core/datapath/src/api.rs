@@ -16,3 +16,8 @@ pub use proto::pubsub::v1::message::MessageType;
 pub use proto::pubsub::v1::message::MessageType::Publish as ProtoPublishType;
 pub use proto::pubsub::v1::message::MessageType::Subscribe as ProtoSubscribeType;
 pub use proto::pubsub::v1::message::MessageType::Unsubscribe as ProtoUnsubscribeType;
+
+#[cfg(feature = "native")]
+pub use proto::pubsub::v1::pub_sub_service_client::PubSubServiceClient;
+#[cfg(feature = "native")]
+pub use proto::pubsub::v1::pub_sub_service_server::PubSubServiceServer;

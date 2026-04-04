@@ -3,4 +3,5 @@
 
 pub mod api;
 pub mod errors;
+#[cfg(feature = "native")]
 pub mod service;
