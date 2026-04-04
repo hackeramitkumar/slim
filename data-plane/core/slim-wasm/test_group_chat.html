@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MLS GroupChat WASM Tests</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #ccc; padding: 20px; }
+    h1 { color: #eee; }
+    .pass { color: #4caf50; }
+    .fail { color: #f44336; }
+    .running { color: #ffeb3b; }
+    .info { color: #2196f3; }
+    #results { white-space: pre-wrap; line-height: 1.6; }
+    #summary { margin-top: 20px; padding: 12px; border-radius: 4px; font-size: 16px; }
+    .summary-pass { background: #1b5e20; color: #a5d6a7; }
+    .summary-fail { background: #b71c1c; color: #ef9a9a; }
+  </style>
+</head>
+<body>
+  <h1>MLS GroupChat WASM Validation</h1>
+  <div id="results"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    import init, { GroupChat } from './pkg/slim_wasm.js';
+
+    const results = document.getElementById('results');
+    const summary = document.getElementById('summary');
+    const SHARED_SECRET = 'kjandjansdiasb8udaijdniasdaindasndasndasndasndasndasndasndas';
+
+    let passed = 0;
+    let failed = 0;
+
+    function log(msg, cls = 'info') {
+      results.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+    }
+
+    async function runTest(name, fn) {
+      log(`▶ ${name} ...`, 'running');
+      try {
+        await fn();
+        log(`  ✓ ${name} PASSED`, 'pass');
+        passed++;
+      } catch (e) {
+        log(`  ✗ ${name} FAILED: ${e}`, 'fail');
+        console.error(`FAILED: ${name}`, e);
+        failed++;
+      }
+    }
+
+    function assert(cond, msg) {
+      if (!cond) throw new Error(`Assertion failed: ${msg}`);
+    }
+
+    function assertEqual(a, b, msg) {
+      if (JSON.stringify(a) !== JSON.stringify(b)) {
+        throw new Error(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+      }
+    }
+
+    function assertBytesEqual(a, b, msg) {
+      const arrA = Array.from(a instanceof Uint8Array ? a : new Uint8Array(a));
+      const arrB = Array.from(b instanceof Uint8Array ? b : new Uint8Array(b));
+      if (arrA.length !== arrB.length || !arrA.every((v, i) => v === arrB[i])) {
+        throw new Error(`${msg}: byte arrays differ (lengths: ${arrA.length} vs ${arrB.length})`);
+      }
+    }
+
+    async function main() {
+      log('Initializing WASM module...');
+      await init();
+      log('WASM module loaded.\n');
+
+      // ---- Test 1: Initialization ----
+      await runTest('GroupChat initialization', async () => {
+        const gc = await new GroupChat('alice', SHARED_SECRET);
+        assert(gc.groupId === undefined, 'no group created yet');
+        assert(gc.epoch === undefined, 'no epoch before group creation');
+        gc.free();
+      });
+
+      // ---- Test 2: Create group ----
+      await runTest('Create group', async () => {
+        const gc = await new GroupChat('alice', SHARED_SECRET);
+        const groupId = await gc.createGroup();
+        assert(groupId.length > 0, 'group ID should be non-empty');
+        assert(gc.groupId !== undefined, 'groupId getter should return a value');
+        assert(gc.epoch !== undefined, 'epoch should exist after group creation');
+        gc.free();
+      });
+
+      // ---- Test 3: Key package generation ----
+      await runTest('Key package generation', async () => {
+        const gc = await new GroupChat('alice', SHARED_SECRET);
+        const kp = await gc.generateKeyPackage();
+        assert(kp.length > 0, 'key package should be non-empty');
+        gc.free();
+      });
+
+      // ---- Test 4: Add member and join ----
+      await runTest('Add member and join group', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+
+        await alice.createGroup();
+
+        const bobKP = await bob.generateKeyPackage();
+        const addResult = await alice.addMember(bobKP);
+        assert(addResult.welcomeMessage.length > 0, 'welcome message should be non-empty');
+        assert(addResult.commitMessage.length > 0, 'commit message should be non-empty');
+
+        const joinedGroupId = await bob.joinGroup(addResult.welcomeMessage);
+        assert(joinedGroupId.length > 0, 'joined group ID should be non-empty');
+        assert(bob.groupId !== undefined, 'bob should have a group after joining');
+
+        alice.free();
+        bob.free();
+      });
+
+      // ---- Test 5: Encrypt / Decrypt ----
+      await runTest('Encrypt and decrypt message', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+
+        await alice.createGroup();
+        const bobKP = await bob.generateKeyPackage();
+        const addResult = await alice.addMember(bobKP);
+        await bob.joinGroup(addResult.welcomeMessage);
+
+        const plaintext = new TextEncoder().encode('Hello from Alice in the browser!');
+        const ciphertext = await alice.encrypt(plaintext);
+
+        assert(ciphertext.length > 0, 'ciphertext should be non-empty');
+        assert(ciphertext.length !== plaintext.length || !Array.from(ciphertext).every((v, i) => v === plaintext[i]),
+          'ciphertext must differ from plaintext');
+
+        const decrypted = await bob.decrypt(ciphertext);
+        assertBytesEqual(decrypted, plaintext, 'decrypted message must match original');
+
+        alice.free();
+        bob.free();
+      });
+
+      // ---- Test 6: Bidirectional messaging ----
+      await runTest('Bidirectional messaging', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+
+        await alice.createGroup();
+        const bobKP = await bob.generateKeyPackage();
+        const addResult = await alice.addMember(bobKP);
+        await bob.joinGroup(addResult.welcomeMessage);
+
+        const msg1 = new TextEncoder().encode('Hello Bob!');
+        const enc1 = await alice.encrypt(msg1);
+        const dec1 = await bob.decrypt(enc1);
+        assertBytesEqual(dec1, msg1, 'alice->bob message');
+
+        const msg2 = new TextEncoder().encode('Hello Alice!');
+        const enc2 = await bob.encrypt(msg2);
+        const dec2 = await alice.decrypt(enc2);
+        assertBytesEqual(dec2, msg2, 'bob->alice message');
+
+        alice.free();
+        bob.free();
+      });
+
+      // ---- Test 7: Epoch advances ----
+      await runTest('Epoch advances on membership change', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+
+        await alice.createGroup();
+        const epochBefore = alice.epoch;
+
+        const bobKP = await bob.generateKeyPackage();
+        const addResult = await alice.addMember(bobKP);
+        await bob.joinGroup(addResult.welcomeMessage);
+
+        const epochAfter = alice.epoch;
+        assert(epochAfter > epochBefore, `epoch should advance: ${epochBefore} -> ${epochAfter}`);
+        assertEqual(alice.epoch, bob.epoch, 'alice and bob should be on the same epoch');
+
+        alice.free();
+        bob.free();
+      });
+
+      // ---- Test 8: Three-party group ----
+      await runTest('Three-party group chat', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+        const charlie = await new GroupChat('charlie', SHARED_SECRET);
+
+        await alice.createGroup();
+
+        // Add bob
+        const bobKP = await bob.generateKeyPackage();
+        const addBobResult = await alice.addMember(bobKP);
+        await bob.joinGroup(addBobResult.welcomeMessage);
+
+        // Add charlie (bob needs to process the commit too)
+        const charlieKP = await charlie.generateKeyPackage();
+        const addCharlieResult = await alice.addMember(charlieKP);
+        await bob.processCommit(addCharlieResult.commitMessage);
+        await charlie.joinGroup(addCharlieResult.welcomeMessage);
+
+        // Alice sends to all
+        const msg = new TextEncoder().encode('Hello group!');
+        const enc = await alice.encrypt(msg);
+
+        const decBob = await bob.decrypt(enc);
+        assertBytesEqual(decBob, msg, 'bob should decrypt alice message');
+
+        const decCharlie = await charlie.decrypt(enc);
+        assertBytesEqual(decCharlie, msg, 'charlie should decrypt alice message');
+
+        alice.free();
+        bob.free();
+        charlie.free();
+      });
+
+      // ---- Test 9: Credential rotation ----
+      await runTest('Credential rotation proposal', async () => {
+        const alice = await new GroupChat('alice', SHARED_SECRET);
+        const bob = await new GroupChat('bob', SHARED_SECRET);
+
+        await alice.createGroup();
+        const bobKP = await bob.generateKeyPackage();
+        const addResult = await alice.addMember(bobKP);
+        await bob.joinGroup(addResult.welcomeMessage);
+
+        const proposal = await alice.rotateCredentials();
+        assert(proposal.length > 0, 'rotation proposal should be non-empty');
+
+        const commitBytes = await bob.processProposal(proposal, true);
+        assert(commitBytes.length > 0, 'commit from proposal should be non-empty');
+        await alice.processCommit(commitBytes);
+
+        // Should still be able to communicate after rotation
+        const msg = new TextEncoder().encode('post-rotation message');
+        const enc = await alice.encrypt(msg);
+        const dec = await bob.decrypt(enc);
+        assertBytesEqual(dec, msg, 'should decrypt after credential rotation');
+
+        alice.free();
+        bob.free();
+      });
+
+      // ---- Summary ----
+      log('');
+      const total = passed + failed;
+      if (failed === 0) {
+        summary.className = 'summary-pass';
+        summary.textContent = `ALL ${total} TESTS PASSED`;
+        log(`\n=== ALL ${total} TESTS PASSED ===`, 'pass');
+      } else {
+        summary.className = 'summary-fail';
+        summary.textContent = `${failed} of ${total} TESTS FAILED`;
+        log(`\n=== ${failed} of ${total} TESTS FAILED ===`, 'fail');
+      }
+    }
+
+    main().catch(e => {
+      log(`FATAL: ${e}`, 'fail');
+      console.error('Fatal error:', e);
+    });
+  </script>
+</body>
+</html>

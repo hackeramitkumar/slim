@@ -33,6 +33,36 @@ tasks:
     cmds:
       - cargo run -- --config ../../../config/base/client-config.yaml --local-agent client --remote-agent server --message "hey there!"
 
+  run:slim:websocket:
+    desc: "Run the SLIM server with WebSocket transport"
+    dir: ".."
+    cmds:
+      - cargo run --bin slim -- --config ./config/websocket/server-config.yaml
+
+  run:mock-agent:websocket:server:
+    desc: "Run the mock agent server over WebSocket"
+    dir: src/sdk-mock
+    cmds:
+      - cargo run -- --config ../../../config/websocket/client-config.yaml --local-agent server --remote-agent client
+
+  run:mock-agent:websocket:client:
+    desc: "Run the mock agent client over WebSocket"
+    dir: src/sdk-mock
+    cmds:
+      - cargo run -- --config ../../../config/websocket/client-config.yaml --local-agent client --remote-agent server --message "hey there!"
+
+  run:browser:build:
+    desc: "Build WASM package for browser demo"
+    dir: ".."
+    cmds:
+      - wasm-pack build core/slim-wasm --target web --out-dir ../../examples/browser/pkg
+
+  run:browser:serve:
+    desc: "Serve the browser demo (requires python3)"
+    dir: "browser"
+    cmds:
+      - python3 -m http.server 8080
+
   docker:build-all:
     desc: "Build all Docker images"
     dir: "../.."

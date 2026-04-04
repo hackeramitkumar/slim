@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<!--
+  Copyright AGNTCY Contributors (https://github.com/agntcy)
+  SPDX-License-Identifier: Apache-2.0
+
+  SLIM Data Plane — Browser Demo
+  Loads the WASM module and provides a UI for testing WebSocket connectivity.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SLIM Browser Demo</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --border: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --muted: #a0a0a0;
+      --success: #00b894;
+      --warn: #fdcb6e;
+      --error: #d63031;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 1rem;
+    }
+    h1 { text-align: center; margin-bottom: 1rem; color: var(--accent); font-size: 1.4rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; max-width: 1200px; margin: 0 auto; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .card h2 { font-size: 1rem; margin-bottom: 0.75rem; color: var(--accent); }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    input, select {
+      width: 100%;
+      padding: 0.4rem 0.6rem;
+      margin-bottom: 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 0.85rem;
+    }
+    button {
+      padding: 0.4rem 1rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-right: 0.5rem;
+      margin-top: 0.25rem;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-warn { background: var(--warn); color: #222; }
+    .btn-error { background: var(--error); color: #fff; }
+    #log {
+      grid-column: 1 / -1;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 0.78rem;
+      padding: 0.75rem;
+      line-height: 1.5;
+    }
+    .log-info { color: var(--text); }
+    .log-success { color: var(--success); }
+    .log-warn { color: var(--warn); }
+    .log-error { color: var(--error); }
+    #status {
+      text-align: center;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    #status.connected { color: var(--success); }
+    #status.disconnected { color: var(--error); }
+  </style>
+</head>
+<body>
+  <h1>SLIM Data Plane — Browser Demo</h1>
+  <div id="status" class="disconnected">Disconnected</div>
+
+  <div class="grid">
+    <!-- Connection -->
+    <div class="card">
+      <h2>Connection</h2>
+      <label>Endpoint</label>
+      <input id="endpoint" value="ws://localhost:46357" />
+      <label>Shared Secret</label>
+      <input id="secret" value="test-secret" type="password" />
+      <label>Organization</label>
+      <input id="org" value="test-org" />
+      <label>Namespace</label>
+      <input id="ns" value="default" />
+      <label>App Name</label>
+      <input id="app" value="browser-demo" />
+      <button class="btn-primary" onclick="doConnect()">Connect</button>
+      <button class="btn-error" onclick="doDisconnect()">Disconnect</button>
+    </div>
+
+    <!-- Subscribe -->
+    <div class="card">
+      <h2>Subscribe / Unsubscribe</h2>
+      <label>Organization</label>
+      <input id="sub-org" value="test-org" />
+      <label>Namespace</label>
+      <input id="sub-ns" value="default" />
+      <label>Name</label>
+      <input id="sub-name" value="peer-app" />
+      <button class="btn-success" onclick="doSubscribe()">Subscribe</button>
+      <button class="btn-warn" onclick="doUnsubscribe()">Unsubscribe</button>
+    </div>
+
+    <!-- Session -->
+    <div class="card">
+      <h2>Create Session</h2>
+      <label>Destination Org</label>
+      <input id="sess-org" value="test-org" />
+      <label>Destination Namespace</label>
+      <input id="sess-ns" value="default" />
+      <label>Destination App</label>
+      <input id="sess-app" value="peer-app" />
+      <label>Session Type</label>
+      <select id="sess-type">
+        <option value="fnf" selected>Fire &amp; Forget</option>
+        <option value="reliable">Reliable (FNF + ACK)</option>
+      </select>
+      <button class="btn-primary" onclick="doCreateSession()">Create Session</button>
+      <button class="btn-error" onclick="doDeleteSession()">Delete Session</button>
+      <label style="margin-top:0.3rem">Session ID (for delete)</label>
+      <input id="del-session" type="number" value="0" />
+    </div>
+
+    <!-- Publish -->
+    <div class="card">
+      <h2>Publish</h2>
+      <label>Session ID</label>
+      <input id="pub-session" type="number" value="0" />
+      <label>Message</label>
+      <input id="pub-msg" value="Hello from browser!" />
+      <label>Fanout (1 = unicast, 0 = broadcast)</label>
+      <input id="pub-fanout" type="number" value="1" />
+      <button class="btn-success" onclick="doPublish()">Publish</button>
+    </div>
+
+    <!-- Log -->
+    <div class="card" id="log">
+      <div class="log-info">Waiting for connection...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import init, { initTracing, SlimClient } from "/pkg/slim_wasm.js";
+
+    let client = null;
+
+    function log(msg, level = "info") {
+      const el = document.getElementById("log");
+      const div = document.createElement("div");
+      div.className = `log-${level}`;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    window.log = log;
+
+    async function doConnect() {
+      try {
+        await init();
+        initTracing();
+        log("WASM initialized", "success");
+
+        const endpoint = document.getElementById("endpoint").value;
+        const secret = document.getElementById("secret").value;
+        const org = document.getElementById("org").value;
+        const ns = document.getElementById("ns").value;
+        const app = document.getElementById("app").value;
+
+        client = await SlimClient.connect(endpoint, secret, org, ns, app);
+        log(`Connected and auto-subscribed as ${client.appName}`, "success");
+
+        const status = document.getElementById("status");
+        status.textContent = `Connected: ${client.appName}`;
+        status.className = "connected";
+
+        client.listen(
+          (msg) => {
+            if (msg.type === "publish" && msg.payload) {
+              const text = new TextDecoder().decode(msg.payload);
+              log(`Received [session=${msg.sessionId}, type=${msg.headerType || "?"}]: ${text}`, "success");
+            } else {
+              log(`Message: ${JSON.stringify(msg)}`, "info");
+            }
+          }
+        );
+      } catch (e) {
+        log(`Connect failed: ${e}`, "error");
+      }
+    }
+    window.doConnect = doConnect;
+
+    async function doDisconnect() {
+      if (client) {
+        client.disconnect();
+        client = null;
+        const status = document.getElementById("status");
+        status.textContent = "Disconnected";
+        status.className = "disconnected";
+        log("Disconnected", "warn");
+      }
+    }
+    window.doDisconnect = doDisconnect;
+
+    async function doSubscribe() {
+      if (!client || !client.isConnected) { log("Not connected", "error"); return; }
+      try {
+        const org = document.getElementById("sub-org").value;
+        const ns = document.getElementById("sub-ns").value;
+        const name = document.getElementById("sub-name").value;
+        await client.subscribe(org, ns, name);
+        log(`Subscribed to ${org}/${ns}/${name}`, "success");
+      } catch (e) {
+        log(`Subscribe failed: ${e}`, "error");
+      }
+    }
+    window.doSubscribe = doSubscribe;
+
+    async function doUnsubscribe() {
+      if (!client || !client.isConnected) { log("Not connected", "error"); return; }
+      try {
+        const org = document.getElementById("sub-org").value;
+        const ns = document.getElementById("sub-ns").value;
+        const name = document.getElementById("sub-name").value;
+        await client.unsubscribe(org, ns, name);
+        log(`Unsubscribed from ${org}/${ns}/${name}`, "success");
+      } catch (e) {
+        log(`Unsubscribe failed: ${e}`, "error");
+      }
+    }
+    window.doUnsubscribe = doUnsubscribe;
+
+    async function doCreateSession() {
+      if (!client || !client.isConnected) { log("Not connected", "error"); return; }
+      try {
+        const org = document.getElementById("sess-org").value;
+        const ns = document.getElementById("sess-ns").value;
+        const app = document.getElementById("sess-app").value;
+        const sessionType = document.getElementById("sess-type").value;
+        const id = client.createSession(org, ns, app, sessionType);
+        log(`Session created: ${id} (type: ${sessionType})`, "success");
+        document.getElementById("pub-session").value = id;
+      } catch (e) {
+        log(`Session creation failed: ${e}`, "error");
+      }
+    }
+    window.doCreateSession = doCreateSession;
+
+    async function doDeleteSession() {
+      if (!client || !client.isConnected) { log("Not connected", "error"); return; }
+      try {
+        const sessionId = parseInt(document.getElementById("del-session").value);
+        client.deleteSession(sessionId);
+        log(`Session deleted: ${sessionId}`, "success");
+      } catch (e) {
+        log(`Session deletion failed: ${e}`, "error");
+      }
+    }
+    window.doDeleteSession = doDeleteSession;
+
+    async function doPublish() {
+      if (!client || !client.isConnected) { log("Not connected", "error"); return; }
+      try {
+        const sessionId = parseInt(document.getElementById("pub-session").value);
+        const msg = document.getElementById("pub-msg").value;
+        const fanout = parseInt(document.getElementById("pub-fanout").value);
+        const payload = new TextEncoder().encode(msg);
+
+        if (fanout !== 1) {
+          await client.publishWithFlags(sessionId, payload, "text/plain", fanout, undefined);
+        } else {
+          await client.publish(sessionId, payload);
+        }
+        log(`Published to session ${sessionId}`, "success");
+      } catch (e) {
+        log(`Publish failed: ${e}`, "error");
+      }
+    }
+    window.doPublish = doPublish;
+  </script>
+</body>
+</html>

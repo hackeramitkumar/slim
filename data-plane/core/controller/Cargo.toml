@@ -8,18 +8,35 @@ description = "Controller service and control API to configure the SLIM data pla
 [lib]
 name = "slim_controller"
 
+[features]
+default = ["native"]
+native = [
+    "agntcy-slim-config/native",
+    "agntcy-slim-datapath/native",
+    "dep:bytes",
+    "dep:h2",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:tokio-util",
+    "dep:tonic",
+]
+wasm = [
+    "agntcy-slim-config/wasm",
+    "agntcy-slim-datapath/wasm",
+]
+
 [dependencies]
-agntcy-slim-config = { workspace = true }
-agntcy-slim-datapath = { workspace = true }
-bytes = { workspace = true }
-h2 = { workspace = true }
+agntcy-slim-config = { workspace = true, default-features = false }
+agntcy-slim-datapath = { workspace = true, default-features = false }
+bytes = { workspace = true, optional = true }
+h2 = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 prost = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
-tonic = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"], optional = true }
+tokio-stream = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 

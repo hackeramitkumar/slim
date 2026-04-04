@@ -314,6 +314,39 @@ impl MessageProcessor {
         (conn_id, tx1, rx2)
     }
 
+    /// Register a WebSocket connection. Takes inbound/outbound streams from
+    /// `websocket::stream::spawn_transport_tasks` and wires them into the
+    /// standard message processing pipeline.
+    pub fn register_websocket_connection(
+        &self,
+        inbound: ReceiverStream<Message>,
+        outbound: mpsc::Sender<Message>,
+        local: Option<SocketAddr>,
+        remote: Option<SocketAddr>,
+    ) -> u64 {
+        let cancellation_token = CancellationToken::new();
+
+        let connection = Connection::new(ConnectionType::Remote)
+            .with_channel(Channel::Client(outbound))
+            .with_local_addr(local)
+            .with_remote_addr(remote)
+            .with_cancellation_token(Some(cancellation_token.clone()));
+
+        let conn_id = self
+            .forwarder()
+            .on_connection_established(connection, None)
+            .unwrap();
+
+        info!("WebSocket connection established with id: {}", conn_id);
+        info!(telemetry = true, counter.num_active_connections = 1);
+
+        let wrapped = inbound.map(Ok);
+
+        self.process_stream(wrapped, conn_id, None, cancellation_token, true);
+
+        conn_id
+    }
+
     pub async fn send_msg(&self, mut msg: Message, out_conn: u64) -> Result<(), DataPathError> {
         let connection = self.forwarder().get_connection(out_conn);
         match connection {

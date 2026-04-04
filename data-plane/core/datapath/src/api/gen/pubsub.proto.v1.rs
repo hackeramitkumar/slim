@@ -157,6 +157,7 @@ impl SessionHeaderType {
     }
 }
 /// Generated client implementations.
+#[cfg(feature = "native")]
 pub mod pub_sub_service_client {
     #![allow(
         unused_variables,
@@ -274,6 +275,7 @@ pub mod pub_sub_service_client {
     }
 }
 /// Generated server implementations.
+#[cfg(feature = "native")]
 pub mod pub_sub_service_server {
     #![allow(
         unused_variables,

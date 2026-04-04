@@ -131,6 +131,7 @@ impl ConnectionType {
     }
 }
 /// Generated client implementations.
+#[cfg(feature = "native")]
 pub mod controller_service_client {
     #![allow(
         unused_variables,
@@ -253,6 +254,7 @@ pub mod controller_service_client {
     }
 }
 /// Generated server implementations.
+#[cfg(feature = "native")]
 pub mod controller_service_server {
     #![allow(
         unused_variables,

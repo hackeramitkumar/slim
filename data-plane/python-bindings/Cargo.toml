@@ -13,10 +13,10 @@ name = "_slim_bindings"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-agntcy-slim-config = { workspace = true }
-agntcy-slim-datapath = { workspace = true }
-agntcy-slim-service = { workspace = true }
-agntcy-slim-tracing = { workspace = true }
+agntcy-slim-config = { workspace = true, features = ["native"] }
+agntcy-slim-datapath = { workspace = true, features = ["native"] }
+agntcy-slim-service = { workspace = true, features = ["native"] }
+agntcy-slim-tracing = { workspace = true, features = ["native"] }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }
 pyo3-stub-gen = { workspace = true }

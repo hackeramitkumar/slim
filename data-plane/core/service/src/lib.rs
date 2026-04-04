@@ -2,51 +2,97 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod errors;
-pub mod producer_buffer;
-pub mod receiver_buffer;
-#[macro_use]
-pub mod session;
-pub mod streaming;
-pub mod timer;
-
-mod fire_and_forget;
-mod request_response;
-mod session_layer;
-
-pub use fire_and_forget::FireAndForgetConfiguration;
-pub use request_response::RequestResponseConfiguration;
-pub use session::SessionMessage;
-pub use slim_datapath::messages::utils::SlimHeaderFlags;
-pub use streaming::StreamingConfiguration;
-
-use serde::Deserialize;
-use session::{AppChannelReceiver, MessageDirection};
-use session_layer::SessionLayer;
-use slim_datapath::api::MessageType;
-use slim_datapath::messages::{Agent, AgentType};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tonic::Status;
-use tracing::{debug, error, info};
 
 pub use errors::ServiceError;
+pub use slim_datapath::messages::utils::SlimHeaderFlags;
+
+#[cfg(feature = "native")]
+pub mod producer_buffer;
+#[cfg(feature = "native")]
+pub mod receiver_buffer;
+#[cfg(feature = "native")]
+#[macro_use]
+pub mod session;
+#[cfg(feature = "native")]
+pub mod streaming;
+#[cfg(feature = "native")]
+pub mod timer;
+
+#[cfg(feature = "native")]
+mod fire_and_forget;
+#[cfg(feature = "native")]
+mod request_response;
+#[cfg(feature = "native")]
+mod session_layer;
+
+#[cfg(feature = "native")]
+pub use fire_and_forget::FireAndForgetConfiguration;
+#[cfg(feature = "native")]
+pub use request_response::RequestResponseConfiguration;
+#[cfg(feature = "native")]
+pub use session::SessionMessage;
+#[cfg(feature = "native")]
+pub use streaming::StreamingConfiguration;
+
+#[cfg(feature = "native")]
+use serde::Deserialize;
+#[cfg(feature = "native")]
+use session::{AppChannelReceiver, MessageDirection};
+#[cfg(feature = "native")]
+use session_layer::SessionLayer;
+#[cfg(feature = "native")]
+use slim_datapath::api::MessageType;
+#[cfg(feature = "native")]
+use slim_datapath::messages::{Agent, AgentType};
+#[cfg(feature = "native")]
+use std::collections::HashMap;
+#[cfg(feature = "native")]
+use std::sync::Arc;
+#[cfg(feature = "native")]
+use tokio::sync::RwLock;
+#[cfg(feature = "native")]
+use tokio::sync::mpsc;
+#[cfg(feature = "native")]
+use tokio_util::sync::CancellationToken;
+#[cfg(feature = "native")]
+use tonic::Status;
+#[cfg(feature = "native")]
+use tracing::{debug, error, info};
+
+#[cfg(feature = "native")]
 use slim_config::component::configuration::{Configuration, ConfigurationError};
+#[cfg(feature = "native")]
 use slim_config::component::id::{ID, Kind};
+#[cfg(feature = "native")]
 use slim_config::component::{Component, ComponentBuilder, ComponentError};
+#[cfg(feature = "native")]
+use slim_auth::shared_secret::SharedSecret;
+#[cfg(feature = "native")]
+use slim_auth::traits::TokenProvider;
+#[cfg(feature = "native")]
 use slim_config::grpc::client::ClientConfig;
+#[cfg(feature = "native")]
 use slim_config::grpc::server::ServerConfig;
+#[cfg(feature = "native")]
+use slim_config::websocket::client::WebSocketClientConfig;
+#[cfg(feature = "native")]
+use slim_config::websocket::server::WebSocketServerConfig;
+#[cfg(feature = "native")]
 use slim_controller::api::proto::api::v1::controller_service_server::ControllerServiceServer;
+#[cfg(feature = "native")]
 use slim_controller::service::ControllerService;
+#[cfg(feature = "native")]
 use slim_datapath::api::proto::pubsub::v1::Message;
+#[cfg(feature = "native")]
 use slim_datapath::api::proto::pubsub::v1::pub_sub_service_server::PubSubServiceServer;
+#[cfg(feature = "native")]
 use slim_datapath::message_processing::MessageProcessor;
 
-// Define the kind of the component as static string
 pub const KIND: &str = "slim";
 
+// Everything below is native-only implementation.
+// The WASM path uses the separate agntcy-slim-session and agntcy-slim-wasm crates.
+#[cfg(feature = "native")]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PubsubConfig {
     /// Pubsub GRPC server settings
@@ -56,6 +102,14 @@ pub struct PubsubConfig {
     /// Pubsub client config to connect to other services
     #[serde(default)]
     clients: Vec<ClientConfig>,
+
+    /// WebSocket server settings
+    #[serde(default)]
+    websocket_servers: Vec<WebSocketServerConfig>,
+
+    /// WebSocket client config to connect to other services
+    #[serde(default)]
+    websocket_clients: Vec<WebSocketClientConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -101,6 +155,14 @@ impl ServiceConfiguration {
 
     pub fn clients(&self) -> &[ClientConfig] {
         &self.pubsub.clients
+    }
+
+    pub fn websocket_servers(&self) -> &[WebSocketServerConfig] {
+        &self.pubsub.websocket_servers
+    }
+
+    pub fn websocket_clients(&self) -> &[WebSocketClientConfig] {
+        &self.pubsub.websocket_clients
     }
 
     pub fn controller_server(&self) -> Option<&ServerConfig> {
@@ -223,7 +285,10 @@ impl Service {
     /// Run the service
     pub async fn run(&mut self) -> Result<(), ServiceError> {
         // Check that at least one client or server is configured
-        if self.config.servers().is_empty() && self.config.pubsub.clients.is_empty() {
+        let has_grpc = !self.config.servers().is_empty() || !self.config.pubsub.clients.is_empty();
+        let has_ws = !self.config.pubsub.websocket_servers.is_empty()
+            || !self.config.pubsub.websocket_clients.is_empty();
+        if !has_grpc && !has_ws {
             return Err(ServiceError::ConfigError(
                 "no pubsub server or clients configured".to_string(),
             ));
@@ -237,6 +302,16 @@ impl Service {
         for client in self.config.pubsub.clients.iter() {
             info!("connecting client to {}", client.endpoint);
             _ = self.connect(client).await?;
+        }
+
+        for ws_server in self.config.pubsub.websocket_servers.iter() {
+            info!("starting WebSocket server on {}", ws_server.endpoint);
+            self.run_ws_server(ws_server)?;
+        }
+
+        for ws_client in self.config.pubsub.websocket_clients.iter() {
+            info!("connecting WebSocket client to {}", ws_client.endpoint);
+            self.connect_websocket(ws_client).await?;
         }
 
         // Controller service
@@ -418,6 +493,184 @@ impl Service {
                 Ok(conn_id)
             }
         }
+    }
+
+    pub fn run_ws_server(&self, config: &WebSocketServerConfig) -> Result<(), ServiceError> {
+        use std::net::SocketAddr;
+        use std::str::FromStr;
+
+        let addr = SocketAddr::from_str(&config.endpoint)
+            .map_err(|e| ServiceError::ConfigError(format!("invalid ws endpoint: {}", e)))?;
+
+        let message_processor = self.message_processor.clone();
+        let drain_rx = self.watch.clone();
+        let token = CancellationToken::new();
+
+        let verifier: Option<Arc<SharedSecret>> = config
+            .shared_secret
+            .as_ref()
+            .and_then(|s| SharedSecret::new("server", s).ok())
+            .map(Arc::new);
+        let auth_param = config.websocket_auth_query_param.clone();
+
+        self.cancellation_tokens
+            .write()
+            .insert(config.endpoint.clone(), token.clone());
+
+        tokio::spawn(async move {
+            let listener = match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    error!("failed to bind WebSocket server: {}", e);
+                    return;
+                }
+            };
+
+            info!("WebSocket server listening on {}", addr);
+            let shutdown = drain_rx.signaled();
+            tokio::pin!(shutdown);
+
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown => {
+                        info!("WebSocket server shutting down");
+                        break;
+                    }
+                    _ = token.cancelled() => {
+                        info!("WebSocket server cancelled");
+                        break;
+                    }
+                    accept = listener.accept() => {
+                        match accept {
+                            Ok((stream, remote_addr)) => {
+                                let mp = message_processor.clone();
+                                let verifier = verifier.clone();
+                                let auth_param = auth_param.clone();
+                                tokio::spawn(async move {
+                                    debug!("accepted TCP connection from {}", remote_addr);
+                                    let io = hyper_util::rt::TokioIo::new(stream);
+                                    let mp_clone = mp.clone();
+                                    let verifier_clone = verifier.clone();
+                                    let auth_param_clone = auth_param.clone();
+
+                                    let service = hyper::service::service_fn(move |mut req: hyper::Request<hyper::body::Incoming>| {
+                                        let mp_inner = mp_clone.clone();
+                                        let verifier_inner = verifier_clone.clone();
+                                        let auth_param_inner = auth_param_clone.clone();
+                                        async move {
+                                            if let (Some(param_name), Some(v)) = (&auth_param_inner, &verifier_inner) {
+                                                let uri_str = req.uri().to_string();
+                                                let token_value = slim_config::websocket::common::extract_query_param(&uri_str, param_name);
+                                                match token_value {
+                                                    Some(tok) => {
+                                                        if let Err(e) = v.try_verify(&tok) {
+                                                            info!("WebSocket auth failed from {}: {}", remote_addr, e);
+                                                            let resp = hyper::Response::builder()
+                                                                .status(hyper::StatusCode::UNAUTHORIZED)
+                                                                .body(http_body_util::Empty::new())
+                                                                .unwrap();
+                                                            return Ok(resp);
+                                                        }
+                                                        debug!("WebSocket auth succeeded for {}", remote_addr);
+                                                    }
+                                                    None => {
+                                                        info!("WebSocket auth: missing token param '{}' from {}", param_name, remote_addr);
+                                                        let resp = hyper::Response::builder()
+                                                            .status(hyper::StatusCode::UNAUTHORIZED)
+                                                            .body(http_body_util::Empty::new())
+                                                            .unwrap();
+                                                        return Ok(resp);
+                                                    }
+                                                }
+                                            }
+
+                                            let (response, upgrade_fut) =
+                                                fastwebsockets::upgrade::upgrade(&mut req)?;
+
+                                            tokio::spawn(async move {
+                                                match upgrade_fut.await {
+                                                    Ok(ws) => {
+                                                        let cancel = CancellationToken::new();
+                                                        let streams = slim_datapath::websocket::stream::spawn_transport_tasks(ws, cancel);
+                                                        mp_inner.register_websocket_connection(
+                                                            streams.inbound,
+                                                            streams.outbound,
+                                                            None,
+                                                            Some(remote_addr),
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        error!("WebSocket upgrade failed: {}", e);
+                                                    }
+                                                }
+                                            });
+
+                                            Ok::<_, fastwebsockets::WebSocketError>(response)
+                                        }
+                                    });
+
+                                    if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                        .serve_connection(io, service)
+                                        .with_upgrades()
+                                        .await
+                                    {
+                                        error!("HTTP connection error: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("WebSocket accept error: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    pub async fn connect_websocket(&self, config: &WebSocketClientConfig) -> Result<u64, ServiceError> {
+        if self.clients.read().contains_key(&config.endpoint) {
+            return Err(ServiceError::ClientAlreadyConnected(
+                config.endpoint.clone(),
+            ));
+        }
+
+        let mut endpoint = config.endpoint.clone();
+
+        if let (Some(param_name), Some(secret), Some(identity)) = (
+            &config.websocket_auth_query_param,
+            &config.shared_secret,
+            &config.identity,
+        ) {
+            let auth = SharedSecret::new(identity, secret)
+                .map_err(|e| ServiceError::ConfigError(format!("auth init failed: {}", e)))?;
+            let token = auth.get_token()
+                .map_err(|e| ServiceError::ConfigError(format!("token generation failed: {}", e)))?;
+            let separator = if endpoint.contains('?') { "&" } else { "?" };
+            endpoint = format!("{}{}{}={}", endpoint, separator, param_name, token);
+        }
+
+        let ws = slim_config::websocket::common::connect_ws(&endpoint)
+            .await
+            .map_err(|e| ServiceError::ConnectionError(format!("WebSocket connect failed: {}", e)))?;
+
+        let cancel = CancellationToken::new();
+        let streams = slim_datapath::websocket::stream::spawn_transport_tasks(ws, cancel);
+
+        let conn_id = self.message_processor.register_websocket_connection(
+            streams.inbound,
+            streams.outbound,
+            None,
+            None,
+        );
+
+        self.clients
+            .write()
+            .insert(config.endpoint.clone(), conn_id);
+
+        Ok(conn_id)
     }
 
     pub fn disconnect(&self, conn: u64) -> Result<(), ServiceError> {

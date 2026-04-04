@@ -8,19 +8,48 @@ description = "Main service and public API to interact with SLIM data plane."
 [lib]
 name = "slim_service"
 
+[features]
+default = ["native"]
+native = [
+    "agntcy-slim-auth/native",
+    "agntcy-slim-config/native",
+    "agntcy-slim-controller/native",
+    "agntcy-slim-datapath/native",
+    "dep:async-trait",
+    "dep:drain",
+    "dep:fastwebsockets",
+    "dep:http-body-util",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:tonic",
+]
+wasm = [
+    "agntcy-slim-auth/wasm",
+    "agntcy-slim-config/wasm",
+    "agntcy-slim-controller/wasm",
+    "agntcy-slim-datapath/wasm",
+]
+
 [dependencies]
-agntcy-slim-config = { workspace = true }
-agntcy-slim-controller = { workspace = true }
-agntcy-slim-datapath = { workspace = true }
-async-trait = { workspace = true }
-drain = { workspace = true }
+agntcy-slim-auth = { workspace = true, default-features = false }
+agntcy-slim-config = { workspace = true, default-features = false }
+agntcy-slim-controller = { workspace = true, default-features = false }
+agntcy-slim-datapath = { workspace = true, default-features = false }
+async-trait = { workspace = true, optional = true }
+drain = { workspace = true, optional = true }
+fastwebsockets = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
-tonic = { workspace = true }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+tonic = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

@@ -1,0 +1,53 @@
+[package]
+name = "agntcy-slim-auth"
+edition = { workspace = true }
+license = { workspace = true }
+version = "0.1.0"
+description = "Authentication and authorization for SLIM data plane."
+
+[lib]
+name = "slim_auth"
+
+[features]
+default = ["native"]
+native = [
+    "dep:aws-lc-rs",
+    "dep:display-error-chain",
+    "dep:jsonwebtoken",
+    "dep:mls-rs-core",
+    "dep:mls-rs-crypto-awslc",
+    "dep:notify",
+    "dep:parking_lot",
+    "dep:tokio",
+    "dep:tokio-util",
+]
+wasm = [
+    "dep:getrandom",
+    "dep:hmac",
+    "dep:js-sys",
+    "dep:parking_lot",
+    "dep:sha2",
+]
+
+[dependencies]
+async-trait = { workspace = true }
+aws-lc-rs = { version = "1", optional = true }
+base64 = { workspace = true }
+display-error-chain = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+hex = { workspace = true }
+hmac = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+jsonwebtoken = { version = "8", optional = true }
+mls-rs-core = { workspace = true, optional = true }
+mls-rs-crypto-awslc = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+tracing = { workspace = true }

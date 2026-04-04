@@ -5,17 +5,14 @@ pub async fn shutdown() {
     imp::shutdown().await
 }
 
-#[cfg(unix)]
+#[cfg(all(feature = "native", unix))]
 mod imp {
     use tokio::signal::unix::{SignalKind, signal};
     use tracing::info;
 
     pub(super) async fn shutdown() {
         tokio::select! {
-            // this will handle interrupt signal by users
             _ = sig(SignalKind::interrupt(), "SIGINT") => {}
-            // this will handle SIGTERM signal
-            // e.g. k8s send this signal to stop the container
             _ = sig(SignalKind::terminate(), "SIGTERM") => {}
         };
     }
@@ -33,7 +30,7 @@ mod imp {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(all(feature = "native", not(unix)))]
 mod imp {
     use tracing::info;
 
@@ -46,5 +43,12 @@ mod imp {
             target: "slim::signal",
             "received signal Ctrl-C, starting shutdown",
         );
+    }
+}
+
+#[cfg(all(feature = "wasm", not(feature = "native")))]
+mod imp {
+    pub(super) async fn shutdown() {
+        std::future::pending::<()>().await
     }
 }

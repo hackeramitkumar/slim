@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SLIM MLS Group Chat — Validation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>SLIM MLS Group Chat</h1>
+    <p class="subtitle">Interactive validation for WASM-based MLS end-to-end encryption</p>
+  </header>
+
+  <main>
+    <!-- Setup Panel -->
+    <section id="setup-panel" class="panel">
+      <h2>Setup</h2>
+      <div class="form-row">
+        <label for="shared-secret">Shared Secret</label>
+        <input type="text" id="shared-secret" value="kjandjansdiasb8udaijdniasdaindasndasndasndasndasndasndasndas" />
+      </div>
+      <div class="form-row">
+        <label for="participant-name">Participant Name</label>
+        <div class="input-group">
+          <input type="text" id="participant-name" placeholder="e.g. alice" />
+          <button id="btn-add-participant">Add Participant</button>
+        </div>
+      </div>
+      <div id="participants-list" class="chip-list"></div>
+    </section>
+
+    <!-- Group Operations Panel -->
+    <section id="group-panel" class="panel" style="display:none;">
+      <h2>Group Operations</h2>
+      <div class="toolbar">
+        <div class="form-row inline">
+          <label for="group-creator">Creator</label>
+          <select id="group-creator"></select>
+          <button id="btn-create-group">Create Group</button>
+        </div>
+      </div>
+
+      <div id="group-info" class="info-card" style="display:none;">
+        <div class="info-row"><span class="label">Group ID</span><code id="group-id-display">—</code></div>
+        <div class="info-row"><span class="label">Epoch</span><code id="epoch-display">—</code></div>
+        <div class="info-row"><span class="label">Members</span><span id="members-display">—</span></div>
+      </div>
+
+      <div id="add-member-section" style="display:none;">
+        <h3>Add Member</h3>
+        <div class="form-row inline">
+          <select id="member-to-add"></select>
+          <button id="btn-add-member">Add to Group</button>
+        </div>
+      </div>
+
+      <div id="rotation-section" style="display:none;">
+        <h3>Credential Rotation</h3>
+        <div class="form-row inline">
+          <select id="rotate-who"></select>
+          <select id="rotate-committer"></select>
+          <button id="btn-rotate">Rotate &amp; Commit</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Messaging Panel -->
+    <section id="messaging-panel" class="panel" style="display:none;">
+      <h2>Encrypted Messaging</h2>
+      <div class="form-row inline">
+        <label>From</label>
+        <select id="msg-sender"></select>
+        <input type="text" id="msg-text" placeholder="Type a message…" class="flex-grow" />
+        <button id="btn-send">Send</button>
+      </div>
+      <div id="chat-log"></div>
+    </section>
+
+    <!-- Automated Tests Panel -->
+    <section id="tests-panel" class="panel">
+      <h2>Automated Tests</h2>
+      <button id="btn-run-tests">Run All Tests</button>
+      <div id="test-results"></div>
+      <div id="test-summary"></div>
+    </section>
+
+    <!-- Event Log -->
+    <section id="log-panel" class="panel">
+      <h2>Event Log</h2>
+      <button id="btn-clear-log" class="small">Clear</button>
+      <div id="event-log"></div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

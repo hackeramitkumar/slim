@@ -3,8 +3,6 @@
 
 use thiserror::Error;
 
-use crate::session::SessionMessage;
-
 #[derive(Error, Debug)]
 pub enum ServiceError {
     #[error("configuration error {0}")]
@@ -37,12 +35,16 @@ pub enum ServiceError {
     ClientAlreadyConnected(String),
     #[error("server not found: {0}")]
     ServerNotFound(String),
-    #[error("error sendinfg message: {0}")]
+    #[error("error sending message: {0}")]
     MessageSendingError(String),
+    #[cfg(feature = "native")]
+    #[error("grpc configuration error")]
+    GrpcConfigError(String),
     #[error("unknown error")]
     Unknown,
 }
 
+#[cfg(feature = "native")]
 #[derive(Error, Debug, PartialEq)]
 pub enum SessionError {
     #[error("error receiving message from slim instance: {0}")]
@@ -79,7 +81,7 @@ pub enum SessionError {
     Timeout {
         session_id: u32,
         message_id: u32,
-        message: Box<SessionMessage>,
+        message: Box<crate::session::SessionMessage>,
     },
     #[error("configuration error: {0}")]
     ConfigurationError(String),
