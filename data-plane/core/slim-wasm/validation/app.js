@@ -394,6 +394,24 @@ async function runTests() {
     a.free(); b.free(); c.free();
   });
 
+  await test('Wrong shared secret rejected', async () => {
+    const WRONG_SECRET = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+    const a = await new GroupChat('t_alice', SECRET);
+    const intruder = await new GroupChat('t_evil', WRONG_SECRET);
+    await a.createGroup();
+    const kp = await intruder.generateKeyPackage();
+    let rejected = false;
+    try {
+      await a.addMember(kp);
+    } catch (e) {
+      rejected = true;
+      assert(String(e).includes('credential rejected') || String(e).includes('verification failed'),
+        `expected credential rejection, got: ${e}`);
+    }
+    assert(rejected, 'addMember should have rejected the wrong shared secret');
+    a.free(); intruder.free();
+  });
+
   await test('Credential rotation', async () => {
     const a = await new GroupChat('t_alice', SECRET);
     const b = await new GroupChat('t_bob', SECRET);
