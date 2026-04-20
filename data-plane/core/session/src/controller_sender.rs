@@ -789,7 +789,7 @@ mod tests {
         assert_eq!(received, request);
 
         // Create the discovery reply
-        let payload = CommandPayload::builder().discovery_reply();
+        let payload = CommandPayload::builder().discovery_reply(vec![]);
 
         let reply = Message::builder()
             .source(source.clone())
@@ -848,6 +848,7 @@ mod tests {
             None,                  // max_retries
             None,                  // timer_duration
             Some(channel.clone()), // channel
+            0,                     // selected_cipher_suite
         );
 
         let request = Message::builder()
@@ -2393,6 +2394,7 @@ mod tests {
             None,  // max_retries
             None,  // timer_duration
             None,  // channel (None for P2P)
+            0,     // selected_cipher_suite
         );
 
         let join_request = Message::builder()
@@ -2529,6 +2531,7 @@ mod tests {
             None,                       // max_retries
             None,                       // timer_duration
             Some(channel_name.clone()), // channel name
+            0,                          // selected_cipher_suite
         );
 
         let join_request = Message::builder()

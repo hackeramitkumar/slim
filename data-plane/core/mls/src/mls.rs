@@ -3,13 +3,11 @@
 
 use mls_rs::IdentityProvider;
 use mls_rs::{
-    CipherSuite, Client, ExtensionList, Group, MlsMessage,
+    CipherSuite, CipherSuiteProvider, Client, CryptoProvider, ExtensionList, Group, MlsMessage,
     crypto::{SignaturePublicKey, SignatureSecretKey},
     group::ReceivedMessage,
     identity::{SigningIdentity, basic::BasicCredential},
 };
-#[cfg(any(test, all(feature = "wasm", not(feature = "native"))))]
-use mls_rs::{CipherSuiteProvider, CryptoProvider};
 
 use crate::crypto::CryptoProviderImpl;
 use std::collections::HashSet;
@@ -20,12 +18,48 @@ use slim_auth::traits::{TokenProvider, Verifier};
 use crate::errors::MlsError;
 use crate::identity_provider::SlimIdentityProvider;
 
-// Native uses CURVE25519_AES128 (Ed25519 + X25519, supported by aws-lc).
-// WASM uses P256_AES128 because browser WebCrypto lacks Curve25519 support.
+/// Default cipher suite when none is explicitly selected.
 #[cfg(feature = "native")]
-const CIPHERSUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
+const DEFAULT_CIPHERSUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
 #[cfg(all(feature = "wasm", not(feature = "native")))]
-const CIPHERSUITE: CipherSuite = CipherSuite::P256_AES128;
+const DEFAULT_CIPHERSUITE: CipherSuite = CipherSuite::P256_AES128;
+
+/// Returns the list of MLS cipher suites supported on this platform.
+///
+/// - Native (aws-lc): supports both CURVE25519_AES128 and P256_AES128
+/// - WASM (WebCrypto): only P256_AES128 (WebCrypto lacks Curve25519)
+pub fn supported_cipher_suites() -> Vec<CipherSuite> {
+    #[cfg(feature = "native")]
+    {
+        vec![CipherSuite::CURVE25519_AES128, CipherSuite::P256_AES128]
+    }
+    #[cfg(all(feature = "wasm", not(feature = "native")))]
+    {
+        vec![CipherSuite::P256_AES128]
+    }
+}
+
+/// Returns the raw u16 IDs of supported cipher suites (for proto serialization).
+pub fn supported_cipher_suite_ids() -> Vec<u16> {
+    supported_cipher_suites()
+        .iter()
+        .map(|cs| cs.raw_value())
+        .collect()
+}
+
+/// Selects the best common cipher suite from the moderator's and participant's
+/// supported sets. Returns `None` if there is no overlap.
+///
+/// Preference order: the moderator's list order wins (first match).
+pub fn negotiate_cipher_suite(
+    moderator_suites: &[CipherSuite],
+    participant_suites: &[CipherSuite],
+) -> Option<CipherSuite> {
+    moderator_suites
+        .iter()
+        .find(|cs| participant_suites.contains(cs))
+        .copied()
+}
 
 pub type CommitMsg = Vec<u8>;
 pub type WelcomeMsg = Vec<u8>;
@@ -55,6 +89,7 @@ where
 {
     identity: Option<String>,
     stored_identity: Option<InMemoryIdentity>,
+    cipher_suite: CipherSuite,
     client: Option<
         Client<
             mls_rs::client_builder::WithIdentityProvider<
@@ -90,6 +125,7 @@ where
         let mut debug_struct = f.debug_struct("mls");
         debug_struct
             .field("identity", &self.identity)
+            .field("cipher_suite", &self.cipher_suite.raw_value())
             .field("has_client", &self.client.is_some())
             .field("has_group", &self.group.is_some());
 
@@ -112,11 +148,22 @@ where
         Self {
             identity: None,
             stored_identity: None,
+            cipher_suite: DEFAULT_CIPHERSUITE,
             client: None,
             group: None,
             identity_provider,
             identity_verifier,
         }
+    }
+
+    /// Set the cipher suite to use for this MLS instance.
+    /// Must be called before `initialize()`.
+    pub fn set_cipher_suite(&mut self, cipher_suite: CipherSuite) {
+        self.cipher_suite = cipher_suite;
+    }
+
+    pub fn get_cipher_suite(&self) -> CipherSuite {
+        self.cipher_suite
     }
 
     /// Creates a signing identity from the keys stored in the identity provider.
@@ -149,13 +196,14 @@ where
         Ok((private_key, signing_identity))
     }
 
-    #[cfg(any(test, all(feature = "wasm", not(feature = "native"))))]
     #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
     #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
-    async fn generate_key_pair() -> Result<(SignatureSecretKey, SignaturePublicKey), MlsError> {
+    async fn generate_key_pair_for(
+        cipher_suite: CipherSuite,
+    ) -> Result<(SignatureSecretKey, SignaturePublicKey), MlsError> {
         let crypto_provider = crate::crypto::default_crypto_provider();
         let cipher_suite_provider = crypto_provider
-            .cipher_suite_provider(CIPHERSUITE)
+            .cipher_suite_provider(cipher_suite)
             .ok_or(MlsError::CiphersuiteUnavailable)?;
 
         cipher_suite_provider
@@ -167,7 +215,7 @@ where
     #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
     #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
     pub async fn initialize(&mut self) -> Result<(), MlsError> {
-        debug!("Initializing MLS");
+        debug!(cipher_suite = self.cipher_suite.raw_value(), "Initializing MLS");
 
         // Generate fresh MLS signature keys before first use. This ensures that
         // even if the identity provider was cloned (e.g. Jwt<T> deep-copies keys
@@ -177,8 +225,6 @@ where
 
         self.identity = Some(self.identity_provider.get_id()?);
 
-        // Initialize stored_identity with placeholder key bytes; they are filled in by
-        // create_signing_identity() below which reads the keys from the identity provider.
         let stored_identity = InMemoryIdentity {
             identifier: self
                 .identity
@@ -193,14 +239,20 @@ where
 
         self.stored_identity = Some(stored_identity);
 
-        // For WASM: the identity provider's rotate_signature_keys() produces
-        // opaque random bytes, not real P256 keys that WebCrypto can use.
-        // Generate a proper key pair via the MLS crypto provider and push
-        // those keys back into the identity provider so that get_token()
-        // embeds the correct public key in the token.
-        #[cfg(all(feature = "wasm", not(feature = "native")))]
-        let (private_key, signing_identity) = {
-            let (priv_key, pub_key) = Self::generate_key_pair().await?;
+        let uses_native_ed25519 = cfg!(feature = "native")
+            && self.cipher_suite == CipherSuite::CURVE25519_AES128;
+
+        let (private_key, signing_identity) = if uses_native_ed25519 {
+            // The identity provider supplies real Ed25519 keys via
+            // rotate_signature_keys(), so use them directly.
+            self.create_signing_identity(false)?
+        } else {
+            // For non-Ed25519 suites (P256 on native) or WASM: the identity
+            // provider's rotate_signature_keys() may produce wrong key types.
+            // Generate a proper key pair via the MLS crypto provider and push
+            // those keys back into the identity provider so that get_token()
+            // embeds the correct public key in the token.
+            let (priv_key, pub_key) = Self::generate_key_pair_for(self.cipher_suite).await?;
             self.identity_provider
                 .set_signature_keys(priv_key.as_bytes().to_vec(), pub_key.as_bytes().to_vec())?;
             let token = self.identity_provider.get_token()?;
@@ -214,11 +266,6 @@ where
             (priv_key, si)
         };
 
-        // For native: the identity provider supplies real Ed25519 keys via
-        // rotate_signature_keys(), so use them directly.
-        #[cfg(feature = "native")]
-        let (private_key, signing_identity) = self.create_signing_identity(false)?;
-
         let crypto_provider = crate::crypto::default_crypto_provider();
 
         let identity_provider = SlimIdentityProvider::new(self.identity_verifier.clone());
@@ -226,7 +273,7 @@ where
         let client = Client::builder()
             .identity_provider(identity_provider)
             .crypto_provider(crypto_provider)
-            .signing_identity(signing_identity, private_key, CIPHERSUITE)
+            .signing_identity(signing_identity, private_key, self.cipher_suite)
             .build();
 
         self.client = Some(client);
@@ -460,6 +507,16 @@ where
         let group = self.group.as_mut().ok_or(MlsError::GroupNotExists)?;
         group.write_to_storage().await?;
         Ok(())
+    }
+
+    /// Drops the current MLS group, if any. The client remains valid so a new
+    /// group can be created afterwards.
+    pub fn destroy_group(&mut self) {
+        self.group = None;
+    }
+
+    pub fn has_group(&self) -> bool {
+        self.group.is_some()
     }
 
     pub fn get_group_id(&self) -> Option<Vec<u8>> {
@@ -697,6 +754,92 @@ mod tests {
     }
 
     #[test]
+    fn test_p256_cipher_suite_messaging() -> Result<(), Box<dyn std::error::Error>> {
+        let mut alice = Mls::new(
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+        );
+        alice.set_cipher_suite(CipherSuite::P256_AES128);
+
+        let mut bob = Mls::new(
+            SharedSecret::new("bob", SHARED_SECRET).unwrap(),
+            SharedSecret::new("bob", SHARED_SECRET).unwrap(),
+        );
+        bob.set_cipher_suite(CipherSuite::P256_AES128);
+
+        alice.initialize()?;
+        bob.initialize()?;
+
+        let _group_id = alice.create_group()?;
+        let bob_key_package = bob.generate_key_package()?;
+        let res = alice.add_member(&bob_key_package)?;
+        bob.process_welcome(&res.welcome_message)?;
+
+        let message = b"Cross-platform message via P256";
+        let encrypted = alice.encrypt_message(message)?;
+        let decrypted = bob.decrypt_message(&encrypted)?;
+        assert_eq!(decrypted, message);
+
+        let reply = b"Reply from Bob via P256";
+        let encrypted = bob.encrypt_message(reply)?;
+        let decrypted = alice.decrypt_message(&encrypted)?;
+        assert_eq!(decrypted, reply);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cipher_suite_negotiation() {
+        let native_suites = vec![CipherSuite::CURVE25519_AES128, CipherSuite::P256_AES128];
+        let wasm_suites = vec![CipherSuite::P256_AES128];
+
+        // Native moderator + WASM participant: should select P256
+        let selected = negotiate_cipher_suite(&native_suites, &wasm_suites);
+        assert_eq!(selected, Some(CipherSuite::P256_AES128));
+
+        // Native moderator + native participant: should select CURVE25519 (first in moderator list)
+        let selected = negotiate_cipher_suite(&native_suites, &native_suites);
+        assert_eq!(selected, Some(CipherSuite::CURVE25519_AES128));
+
+        // WASM moderator + native participant: should select P256
+        let selected = negotiate_cipher_suite(&wasm_suites, &native_suites);
+        assert_eq!(selected, Some(CipherSuite::P256_AES128));
+
+        // No overlap: should return None
+        let only_curve25519 = vec![CipherSuite::CURVE25519_AES128];
+        let selected = negotiate_cipher_suite(&only_curve25519, &wasm_suites);
+        assert_eq!(selected, None);
+    }
+
+    #[test]
+    fn test_supported_cipher_suites() {
+        let suites = supported_cipher_suites();
+        assert!(!suites.is_empty());
+        // On native, both suites should be supported
+        #[cfg(feature = "native")]
+        {
+            assert!(suites.contains(&CipherSuite::CURVE25519_AES128));
+            assert!(suites.contains(&CipherSuite::P256_AES128));
+        }
+
+        let ids = supported_cipher_suite_ids();
+        assert_eq!(suites.len(), ids.len());
+    }
+
+    #[test]
+    fn test_set_cipher_suite() {
+        let mut mls = Mls::new(
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+        );
+
+        assert_eq!(mls.get_cipher_suite(), DEFAULT_CIPHERSUITE);
+
+        mls.set_cipher_suite(CipherSuite::P256_AES128);
+        assert_eq!(mls.get_cipher_suite(), CipherSuite::P256_AES128);
+    }
+
+    #[test]
     fn test_decrypt_message() -> Result<(), Box<dyn std::error::Error>> {
         let mut alice = Mls::new(
             SharedSecret::new("alice", SHARED_SECRET).unwrap(),
@@ -886,7 +1029,8 @@ mod tests {
         stolen_token: &str,
     ) -> (SigningIdentity, SignaturePublicKey) {
         let (_priv, attacker_pub) =
-            Mls::<SharedSecret, SharedSecret>::generate_key_pair().expect("key gen");
+            Mls::<SharedSecret, SharedSecret>::generate_key_pair_for(DEFAULT_CIPHERSUITE)
+                .expect("key gen");
         let stolen_cred = BasicCredential::new(stolen_token.as_bytes().to_vec());
         let signing_id = SigningIdentity::new(stolen_cred.into_credential(), attacker_pub.clone());
         (signing_id, attacker_pub)
@@ -978,7 +1122,7 @@ mod tests {
 
         // Attacker key pair
         let (attacker_priv, _attacker_pub) =
-            Mls::<SharedSecret, SharedSecret>::generate_key_pair()?;
+            Mls::<SharedSecret, SharedSecret>::generate_key_pair_for(DEFAULT_CIPHERSUITE)?;
 
         // Build signing identity using Alice's token + Alice's public key (public part matches)
         let alice_pub = SignaturePublicKey::new(alice_pub_bytes.clone());
@@ -992,7 +1136,7 @@ mod tests {
         let client = Client::builder()
             .identity_provider(identity_provider)
             .crypto_provider(crypto_provider)
-            .signing_identity(fake_identity, attacker_priv.clone(), CIPHERSUITE)
+            .signing_identity(fake_identity, attacker_priv.clone(), DEFAULT_CIPHERSUITE)
             .build();
 
         // Operations expected to fail
@@ -1005,6 +1149,56 @@ mod tests {
             group_res.is_err() || keypkg_res.is_err(),
             "Expected at least one MLS operation failure (signature mismatch)"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_destroy_group_and_recreate() -> Result<(), Box<dyn std::error::Error>> {
+        let mut alice = Mls::new(
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+            SharedSecret::new("alice", SHARED_SECRET).unwrap(),
+        );
+        let mut bob = Mls::new(
+            SharedSecret::new("bob", SHARED_SECRET).unwrap(),
+            SharedSecret::new("bob", SHARED_SECRET).unwrap(),
+        );
+
+        alice.initialize()?;
+        bob.initialize()?;
+
+        let group_id = alice.create_group()?;
+        assert!(alice.has_group());
+
+        let bob_kp = bob.generate_key_package()?;
+        let add_res = alice.add_member(&bob_kp)?;
+        bob.process_welcome(&add_res.welcome_message)?;
+
+        let msg = b"before migration";
+        let enc = alice.encrypt_message(msg)?;
+        let dec = bob.decrypt_message(&enc)?;
+        assert_eq!(msg.as_slice(), dec.as_slice());
+
+        // Destroy both groups, re-init, and recreate
+        alice.destroy_group();
+        assert!(!alice.has_group());
+        bob.destroy_group();
+        assert!(!bob.has_group());
+
+        alice.initialize()?;
+        bob.initialize()?;
+
+        let new_group_id = alice.create_group()?;
+        assert_ne!(group_id, new_group_id);
+
+        let bob_kp2 = bob.generate_key_package()?;
+        let add_res2 = alice.add_member(&bob_kp2)?;
+        bob.process_welcome(&add_res2.welcome_message)?;
+
+        let msg2 = b"after migration";
+        let enc2 = alice.encrypt_message(msg2)?;
+        let dec2 = bob.decrypt_message(&enc2)?;
+        assert_eq!(msg2.as_slice(), dec2.as_slice());
 
         Ok(())
     }

@@ -6,14 +6,15 @@ use tokio::sync::oneshot;
 use tracing::debug;
 
 use slim_datapath::api::ProtoMessage as Message;
+use slim_datapath::messages::Name;
 
 // Local crate
 use crate::errors::SessionError;
 
 #[derive(Debug, Default)]
 pub(crate) struct State {
-    received: bool,
-    timer_id: u32,
+    pub(crate) received: bool,
+    pub(crate) timer_id: u32,
 }
 
 pub(crate) trait TaskUpdate {
@@ -46,6 +47,7 @@ pub enum ModeratorTask {
     CloseOrDisconnect(NotifyParticipants),
     #[allow(dead_code)]
     Update(UpdateParticipant),
+    Migrate(MigrateCipherSuite),
 }
 
 impl ModeratorTask {
@@ -56,6 +58,7 @@ impl ModeratorTask {
             ModeratorTask::Remove(t) => t.ack_tx.take(),
             ModeratorTask::CloseOrDisconnect(t) => t.ack_tx.take(),
             ModeratorTask::Update(t) => t.ack_tx.take(),
+            ModeratorTask::Migrate(_) => None,
         }
     }
 
@@ -73,6 +76,9 @@ impl ModeratorTask {
             ModeratorTask::CloseOrDisconnect(_) => SessionError::ModeratorTaskCloseFailed {
                 source: Box::new(err),
             },
+            ModeratorTask::Migrate(_) => SessionError::ModeratorTaskMigrateFailed {
+                source: Box::new(err),
+            },
         }
     }
     pub(crate) fn ack_msg(&self) -> Option<&Message> {
@@ -81,6 +87,7 @@ impl ModeratorTask {
             ModeratorTask::Remove(t) => t.ack_msg.as_ref(),
             ModeratorTask::CloseOrDisconnect(t) => t.ack_msg.as_ref(),
             ModeratorTask::Update(t) => t.ack_msg.as_ref(),
+            ModeratorTask::Migrate(_) => None,
         }
     }
 }
@@ -141,6 +148,7 @@ impl TaskUpdate for ModeratorTask {
             ModeratorTask::Remove(task) => task.commit_start(timer_id),
             ModeratorTask::Update(task) => task.commit_start(timer_id),
             ModeratorTask::CloseOrDisconnect(task) => task.commit_start(timer_id),
+            ModeratorTask::Migrate(task) => task.commit_start(timer_id),
         }
     }
 
@@ -157,6 +165,7 @@ impl TaskUpdate for ModeratorTask {
             ModeratorTask::Remove(task) => task.update_phase_completed(timer_id),
             ModeratorTask::Update(task) => task.update_phase_completed(timer_id),
             ModeratorTask::CloseOrDisconnect(task) => task.update_phase_completed(timer_id),
+            ModeratorTask::Migrate(task) => task.update_phase_completed(timer_id),
         }
     }
 
@@ -166,6 +175,7 @@ impl TaskUpdate for ModeratorTask {
             ModeratorTask::Remove(task) => task.task_complete(),
             ModeratorTask::Update(task) => task.task_complete(),
             ModeratorTask::CloseOrDisconnect(task) => task.task_complete(),
+            ModeratorTask::Migrate(task) => task.task_complete(),
         }
     }
 }
@@ -579,6 +589,125 @@ impl TaskUpdate for UpdateParticipant {
     }
 }
 
+/// Cipher suite migration task. The moderator uses this to orchestrate
+/// tearing down the old MLS group and re-creating it with a new cipher
+/// suite when an incompatible participant joins.
+///
+/// Lifecycle:
+///   1. CipherMigration sent to all existing participants  (migration_sent)
+///   2. Collect JoinReply key packages from all of them     (key_packages)
+///   3. Recreate group + send welcomes                      (welcomes_sent)
+#[derive(Debug)]
+pub struct MigrateCipherSuite {
+    /// The new cipher suite the group will use.
+    pub(crate) new_cipher_suite: u16,
+    /// Names of the existing participants that must reply.
+    pub(crate) expected_participants: Vec<Name>,
+    /// Key packages received from existing participants (name -> key_package bytes).
+    pub(crate) key_packages: Vec<(Name, Vec<u8>)>,
+    /// Whether CipherMigration messages have been sent.
+    pub(crate) migration_sent: bool,
+    /// Timer for tracking the migration request phase.
+    pub(crate) migration_timer: State,
+    /// Timer for tracking the welcome/commit phase.
+    pub(crate) welcome_timer: State,
+    /// Whether the new group has been created and welcomes sent.
+    pub(crate) welcomes_sent: bool,
+}
+
+impl MigrateCipherSuite {
+    pub(crate) fn new(new_cipher_suite: u16, expected_participants: Vec<Name>) -> Self {
+        Self {
+            new_cipher_suite,
+            expected_participants,
+            key_packages: Vec::new(),
+            migration_sent: false,
+            migration_timer: State::default(),
+            welcome_timer: State::default(),
+            welcomes_sent: false,
+        }
+    }
+
+    /// Record a key package from an existing participant that has re-initialized.
+    /// Returns `true` when all expected key packages have been collected.
+    pub(crate) fn record_key_package(&mut self, name: Name, key_package: Vec<u8>) -> bool {
+        self.key_packages.push((name, key_package));
+        self.key_packages.len() >= self.expected_participants.len()
+    }
+
+    /// Whether all expected key packages have been collected.
+    pub(crate) fn all_key_packages_collected(&self) -> bool {
+        self.key_packages.len() >= self.expected_participants.len()
+    }
+}
+
+impl TaskUpdate for MigrateCipherSuite {
+    fn discovery_start(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn discovery_complete(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn join_start(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn join_complete(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn leave_start(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn leave_complete(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn welcome_start(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn commit_start(&mut self, timer_id: u32) -> Result<(), SessionError> {
+        if !self.migration_sent {
+            debug!(%timer_id, "start migration request on MigrateCipherSuite task");
+            self.migration_timer.received = false;
+            self.migration_timer.timer_id = timer_id;
+            self.migration_sent = true;
+        } else {
+            debug!(%timer_id, "start welcome phase on MigrateCipherSuite task");
+            self.welcome_timer.received = false;
+            self.welcome_timer.timer_id = timer_id;
+        }
+        Ok(())
+    }
+
+    fn proposal_start(&mut self, _timer_id: u32) -> Result<(), SessionError> {
+        Err(unsupported_phase())
+    }
+
+    fn update_phase_completed(&mut self, timer_id: u32) -> Result<(), SessionError> {
+        if self.migration_timer.timer_id == timer_id {
+            self.migration_timer.received = true;
+            debug!(%timer_id, "migration request phase completed on MigrateCipherSuite task");
+            Ok(())
+        } else if self.welcome_timer.timer_id == timer_id {
+            self.welcome_timer.received = true;
+            self.welcomes_sent = true;
+            debug!(%timer_id, "welcome phase completed on MigrateCipherSuite task");
+            Ok(())
+        } else {
+            Err(SessionError::ModeratorTaskUnexpectedTimerId(timer_id))
+        }
+    }
+
+    fn task_complete(&self) -> bool {
+        self.migration_sent && self.migration_timer.received && self.welcomes_sent
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,5 +956,81 @@ mod tests {
         task.update_phase_completed(timer_id)
             .expect("error on notify completed");
         assert!(task.task_complete());
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_migrate_cipher_suite_lifecycle() {
+        let participants = vec![
+            Name::from_strings(["org", "ns", "p1"]).with_id(1),
+            Name::from_strings(["org", "ns", "p2"]).with_id(2),
+        ];
+        let base = 10u32;
+
+        run_scenario(
+            ModeratorTask::Migrate(MigrateCipherSuite::new(2, participants)),
+            vec![
+                Step::unsupported(
+                    "discovery_start_unsupported",
+                    move |t| t.discovery_start(base),
+                    false,
+                ),
+                Step::unsupported(
+                    "join_start_unsupported",
+                    move |t| t.join_start(base),
+                    false,
+                ),
+                // Phase 1: migration request sent
+                Step::ok(
+                    "commit_start_migration",
+                    move |t| t.commit_start(base),
+                    false,
+                ),
+                // Wrong timer for update
+                Step::unexpected_timer(
+                    "update_wrong_timer",
+                    move |t| t.update_phase_completed(base + 99),
+                    base + 99,
+                    false,
+                ),
+                // Correct timer completes migration request phase
+                Step::ok(
+                    "migration_phase_complete",
+                    move |t| t.update_phase_completed(base),
+                    false,
+                ),
+                // Phase 2: welcome/commit for new group
+                Step::ok(
+                    "commit_start_welcome",
+                    move |t| t.commit_start(base + 1),
+                    false,
+                ),
+                Step::ok(
+                    "welcome_phase_complete",
+                    move |t| t.update_phase_completed(base + 1),
+                    true,
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_migrate_key_package_collection() {
+        let p1 = Name::from_strings(["org", "ns", "p1"]).with_id(1);
+        let p2 = Name::from_strings(["org", "ns", "p2"]).with_id(2);
+        let mut task = MigrateCipherSuite::new(2, vec![p1.clone(), p2.clone()]);
+
+        assert!(!task.all_key_packages_collected());
+
+        let got_all = task.record_key_package(p1, vec![1, 2, 3]);
+        assert!(!got_all);
+        assert!(!task.all_key_packages_collected());
+
+        let got_all = task.record_key_package(p2, vec![4, 5, 6]);
+        assert!(got_all);
+        assert!(task.all_key_packages_collected());
+
+        assert_eq!(task.key_packages.len(), 2);
     }
 }

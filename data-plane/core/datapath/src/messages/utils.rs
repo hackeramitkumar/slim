@@ -5,7 +5,9 @@ use std::fmt::Display;
 use std::{collections::HashMap, time::Duration};
 
 use super::encoder::Name;
-use crate::api::proto::dataplane::v1::{GroupClosePayload, GroupNackPayload, PingPayload};
+use crate::api::proto::dataplane::v1::{
+    CipherMigrationPayload, GroupClosePayload, GroupNackPayload, PingPayload,
+};
 use crate::api::{
     Content, LinkNegotiationPayload, MessageType, ProtoLink, ProtoLinkMessageType, ProtoLinkType,
     ProtoMessage, ProtoName, ProtoPublish, ProtoPublishType, ProtoSessionType, ProtoSubscribe,
@@ -383,6 +385,7 @@ impl SessionMessageType {
                 | SessionMessageType::GroupAck
                 | SessionMessageType::GroupNack
                 | SessionMessageType::Ping
+                | SessionMessageType::CipherMigration
         )
     }
 }
@@ -899,6 +902,7 @@ impl ProtoMessage {
         extract_group_ack => as_group_ack_payload(GroupAckPayload),
         extract_group_nack => as_group_nack_payload(GroupNackPayload),
         extract_ping => as_ping_payload(PingPayload),
+        extract_cipher_migration => as_cipher_migration_payload(CipherMigrationPayload),
     }
 }
 
@@ -981,6 +985,7 @@ impl CommandPayload {
         as_group_ack_payload => GroupAck(GroupAckPayload),
         as_group_nack_payload => GroupNack(GroupNackPayload),
         as_ping_payload => Ping(PingPayload),
+        as_cipher_migration_payload => CipherMigration(CipherMigrationPayload),
     }
 }
 
@@ -1020,6 +1025,7 @@ impl AsRef<ProtoPublish> for ProtoMessage {
 ///     Some(5),  // max_retries
 ///     Some(Duration::from_secs(10)),  // timeout
 ///     Some(channel),
+///     0,     // selected_cipher_suite (0 = platform default)
 /// );
 /// ```
 ///
@@ -1061,8 +1067,10 @@ impl CommandPayloadBuilder {
     }
 
     /// Creates a discovery reply payload
-    pub fn discovery_reply(self) -> CommandPayload {
-        let payload = DiscoveryReplyPayload {};
+    pub fn discovery_reply(self, supported_cipher_suites: Vec<u32>) -> CommandPayload {
+        let payload = DiscoveryReplyPayload {
+            supported_cipher_suites,
+        };
         CommandPayload {
             command_payload_type: Some(CommandPayloadType::DiscoveryReply(payload)),
         }
@@ -1075,6 +1083,7 @@ impl CommandPayloadBuilder {
         max_retries: Option<u32>,
         timer_duration: Option<Duration>,
         channel: Option<Name>,
+        selected_cipher_suite: u32,
     ) -> CommandPayload {
         let proto_channel = channel.as_ref().map(ProtoName::from);
 
@@ -1093,6 +1102,7 @@ impl CommandPayloadBuilder {
             enable_mls,
             timer_settings,
             channel: proto_channel,
+            selected_cipher_suite,
         };
         CommandPayload {
             command_payload_type: Some(CommandPayloadType::JoinRequest(payload)),
@@ -1224,6 +1234,14 @@ impl CommandPayloadBuilder {
         let payload = PingPayload {};
         CommandPayload {
             command_payload_type: Some(CommandPayloadType::Ping(payload)),
+        }
+    }
+
+    /// Creates a cipher migration payload
+    pub fn cipher_migration(self, new_cipher_suite: u32) -> CommandPayload {
+        let payload = CipherMigrationPayload { new_cipher_suite };
+        CommandPayload {
+            command_payload_type: Some(CommandPayloadType::CipherMigration(payload)),
         }
     }
 }
@@ -2053,7 +2071,7 @@ mod tests {
     #[test]
     fn test_service_type_to_int() {
         // Get total number of service types
-        let total_service_types = SessionMessageType::Ping as i32;
+        let total_service_types = SessionMessageType::CipherMigration as i32;
 
         for i in 0..total_service_types {
             // int -> ServiceType
@@ -2148,8 +2166,9 @@ mod tests {
         assert!(extracted.destination.is_some());
 
         // Test discovery reply
-        let payload = CommandPayload::builder().discovery_reply();
-        assert!(payload.as_discovery_reply_payload().is_ok());
+        let payload = CommandPayload::builder().discovery_reply(vec![1, 2]);
+        let extracted = payload.as_discovery_reply_payload().unwrap();
+        assert_eq!(extracted.supported_cipher_suites, vec![1, 2]);
 
         // Test join request
         let payload = CommandPayload::builder().join_request(
@@ -2157,10 +2176,12 @@ mod tests {
             Some(5),
             Some(Duration::from_secs(10)),
             Some(dest.clone()),
+            2,
         );
         let extracted = payload.as_join_request_payload().unwrap();
         assert!(extracted.enable_mls);
         assert!(extracted.timer_settings.is_some());
+        assert_eq!(extracted.selected_cipher_suite, 2);
 
         // Test join reply
         let payload = CommandPayload::builder().join_reply(Some(vec![1, 2, 3]));
@@ -2208,6 +2229,11 @@ mod tests {
         // Test ping
         let payload = CommandPayload::builder().ping();
         assert!(payload.as_ping_payload().is_ok());
+
+        // Test cipher migration
+        let payload = CommandPayload::builder().cipher_migration(2);
+        let extracted = payload.as_cipher_migration_payload().unwrap();
+        assert_eq!(extracted.new_cipher_suite, 2);
     }
 
     #[test]

@@ -116,6 +116,7 @@ enum SessionMessageType {
   SESSION_MESSAGE_TYPE_GROUP_ACK = 16;
   SESSION_MESSAGE_TYPE_GROUP_NACK = 17;
   SESSION_MESSAGE_TYPE_PING = 18;
+  SESSION_MESSAGE_TYPE_CIPHER_MIGRATION = 19;
 }
 
 // SLIM message content
@@ -147,6 +148,7 @@ message CommandPayload {
     GroupAckPayload group_ack = 12;
     GroupNackPayload group_nack = 13;
     PingPayload ping = 14;
+    CipherMigrationPayload cipher_migration = 15;
   }
 }
 
@@ -160,7 +162,11 @@ message DiscoveryRequestPayload {
 }
 
 // Discovery Reply
-message DiscoveryReplyPayload {}
+message DiscoveryReplyPayload {
+  // MLS cipher suite IDs supported by this participant (RFC 9420 values).
+  // Empty means the participant uses its platform default (backward compat).
+  repeated uint32 supported_cipher_suites = 1;
+}
 
 // Join Request
 message JoinRequestPayload {
@@ -171,6 +177,9 @@ message JoinRequestPayload {
   // name where to send the messages
   // it can be a channel or none
   optional Name channel = 3;
+  // MLS cipher suite selected by the moderator for this group (RFC 9420 value).
+  // 0 means use platform default (backward compat with older moderators).
+  uint32 selected_cipher_suite = 4;
 }
 
 message TimerSettings {
@@ -261,6 +270,16 @@ message GroupNackPayload {}
 
 // Ping
 message PingPayload {}
+
+// Cipher Migration
+// Sent by the moderator to existing participants when the group's MLS cipher
+// suite must change (e.g. a browser participant that only supports P256 joins a
+// CURVE25519 group). Participants re-initialize MLS with the new suite and
+// reply with a fresh key package.
+message CipherMigrationPayload {
+  // The new cipher suite ID (RFC 9420 value) that the group will use.
+  uint32 new_cipher_suite = 1;
+}
 
 // SubscriptionAck is delivered directly to the requesting connection in response
 // to a Subscribe or Unsubscribe that carried a non-zero subscription_id field.

@@ -513,6 +513,7 @@ pub fn handle_channel_discovery_message(
     app_name: &Name,
     session_id: u32,
     session_type: ProtoSessionType,
+    supported_cipher_suites: Vec<u32>,
 ) -> Result<Message, SessionError> {
     let destination = message.get_source();
 
@@ -538,7 +539,11 @@ pub fn handle_channel_discovery_message(
         .session_message_type(ProtoSessionMessageType::DiscoveryReply)
         .session_id(session_id)
         .message_id(msg_id)
-        .payload(CommandPayload::builder().discovery_reply().as_content())
+        .payload(
+            CommandPayload::builder()
+                .discovery_reply(supported_cipher_suites)
+                .as_content(),
+        )
         .build_publish()?;
 
     Ok(msg)
@@ -1130,6 +1135,7 @@ mod tests {
             &app_name,
             session_id,
             ProtoSessionType::Multicast,
+            vec![1, 2],
         )
         .expect("should create discovery response");
 
@@ -1371,7 +1377,7 @@ mod tests {
             .session_message_type(slim_datapath::api::ProtoSessionMessageType::DiscoveryReply)
             .session_id(session_id)
             .message_id(discovery_msg_id)
-            .payload(CommandPayload::builder().discovery_reply().as_content())
+            .payload(CommandPayload::builder().discovery_reply(vec![]).as_content())
             .build_publish()
             .unwrap();
         discovery_reply

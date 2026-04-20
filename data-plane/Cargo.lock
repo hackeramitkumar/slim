@@ -251,6 +251,7 @@ dependencies = [
  "agntcy-slim-auth",
  "agntcy-slim-datapath",
  "agntcy-slim-version",
+ "async-trait",
  "base64 0.22.1",
  "getrandom 0.3.4",
  "hex",

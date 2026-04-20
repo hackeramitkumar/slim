@@ -813,7 +813,7 @@ mod tests {
 
         // send join_request message to create the session
         let payload = CommandPayload::builder()
-            .join_request(false, None, None, None)
+            .join_request(false, None, None, None, 0)
             .as_content();
 
         let mut join_request = Message::builder()

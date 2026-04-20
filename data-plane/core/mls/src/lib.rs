@@ -5,3 +5,5 @@ pub mod crypto;
 pub mod errors;
 pub mod identity_provider;
 pub mod mls;
+
+pub use mls_rs::CipherSuite;

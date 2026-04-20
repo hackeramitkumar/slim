@@ -427,12 +427,16 @@ where
     ) -> Result<(), SessionError> {
         match session_message_type {
             ProtoSessionMessageType::DiscoveryRequest => {
-                // reply directly without creating any new Session
+                let cipher_suites = slim_mls::mls::supported_cipher_suite_ids()
+                    .into_iter()
+                    .map(|id| id as u32)
+                    .collect();
                 let msg = handle_channel_discovery_message(
                     message,
                     local_name,
                     session_id,
                     session_type,
+                    cipher_suites,
                 )?;
 
                 self.transmitter.send_to_slim(Ok(msg)).await

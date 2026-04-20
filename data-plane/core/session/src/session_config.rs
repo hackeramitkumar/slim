@@ -131,6 +131,7 @@ mod tests {
             Some(3),
             Some(Duration::from_millis(500)),
             Some(dest),
+            0,
         );
 
         let mut metadata = HashMap::new();
@@ -159,7 +160,7 @@ mod tests {
     #[test]
     fn test_from_join_request_without_timer_settings() {
         let dest = Name::from_strings(["dest", "", ""]);
-        let payload = CommandPayload::builder().join_request(false, None, None, Some(dest));
+        let payload = CommandPayload::builder().join_request(false, None, None, Some(dest), 0);
 
         let metadata = HashMap::new();
 
@@ -187,6 +188,7 @@ mod tests {
             Some(10),
             Some(Duration::from_secs(5)),
             Some(dest),
+            0,
         );
 
         let config = SessionConfig::from_join_request(
@@ -254,6 +256,7 @@ mod tests {
             Some(100),
             Some(Duration::from_secs(3600)), // 1 hour
             Some(dest),
+            0,
         );
 
         let config = SessionConfig::from_join_request(

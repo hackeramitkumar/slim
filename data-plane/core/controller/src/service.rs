@@ -592,6 +592,7 @@ fn new_channel_message(
                 Some(10),
                 Some(Duration::from_secs(1)),
                 Some(channel.clone()),
+                0,
             )
             .as_content(),
     );

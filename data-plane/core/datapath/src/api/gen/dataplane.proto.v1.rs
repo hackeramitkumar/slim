@@ -156,7 +156,7 @@ pub struct ApplicationPayload {
 pub struct CommandPayload {
     #[prost(
         oneof = "command_payload::CommandPayloadType",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15"
     )]
     pub command_payload_type: ::core::option::Option<
         command_payload::CommandPayloadType,
@@ -194,6 +194,8 @@ pub mod command_payload {
         GroupNack(super::GroupNackPayload),
         #[prost(message, tag = "14")]
         Ping(super::PingPayload),
+        #[prost(message, tag = "15")]
+        CipherMigration(super::CipherMigrationPayload),
     }
 }
 /// Discovery Request
@@ -205,8 +207,13 @@ pub struct DiscoveryRequestPayload {
     pub destination: ::core::option::Option<Name>,
 }
 /// Discovery Reply
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DiscoveryReplyPayload {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DiscoveryReplyPayload {
+    /// MLS cipher suite IDs supported by this participant (RFC 9420 values).
+    /// Empty means the participant uses its platform default (backward compat).
+    #[prost(uint32, repeated, tag = "1")]
+    pub supported_cipher_suites: ::prost::alloc::vec::Vec<u32>,
+}
 /// Join Request
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct JoinRequestPayload {
@@ -220,6 +227,10 @@ pub struct JoinRequestPayload {
     /// it can be a channel or none
     #[prost(message, optional, tag = "3")]
     pub channel: ::core::option::Option<Name>,
+    /// MLS cipher suite selected by the moderator for this group (RFC 9420 value).
+    /// 0 means use platform default (backward compat with older moderators).
+    #[prost(uint32, tag = "4")]
+    pub selected_cipher_suite: u32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimerSettings {
@@ -327,6 +338,17 @@ pub struct GroupNackPayload {}
 /// Ping
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PingPayload {}
+/// Cipher Migration
+/// Sent by the moderator to existing participants when the group's MLS cipher
+/// suite must change (e.g. a browser participant that only supports P256 joins a
+/// CURVE25519 group). Participants re-initialize MLS with the new suite and
+/// reply with a fresh key package.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CipherMigrationPayload {
+    /// The new cipher suite ID (RFC 9420 value) that the group will use.
+    #[prost(uint32, tag = "1")]
+    pub new_cipher_suite: u32,
+}
 /// SubscriptionAck is delivered directly to the requesting connection in response
 /// to a Subscribe or Unsubscribe that carried a non-zero subscription_id field.
 /// It is never routed through the subscription table.
@@ -410,6 +432,7 @@ pub enum SessionMessageType {
     GroupAck = 16,
     GroupNack = 17,
     Ping = 18,
+    CipherMigration = 19,
 }
 impl SessionMessageType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -437,6 +460,7 @@ impl SessionMessageType {
             Self::GroupAck => "SESSION_MESSAGE_TYPE_GROUP_ACK",
             Self::GroupNack => "SESSION_MESSAGE_TYPE_GROUP_NACK",
             Self::Ping => "SESSION_MESSAGE_TYPE_PING",
+            Self::CipherMigration => "SESSION_MESSAGE_TYPE_CIPHER_MIGRATION",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -461,6 +485,7 @@ impl SessionMessageType {
             "SESSION_MESSAGE_TYPE_GROUP_ACK" => Some(Self::GroupAck),
             "SESSION_MESSAGE_TYPE_GROUP_NACK" => Some(Self::GroupNack),
             "SESSION_MESSAGE_TYPE_PING" => Some(Self::Ping),
+            "SESSION_MESSAGE_TYPE_CIPHER_MIGRATION" => Some(Self::CipherMigration),
             _ => None,
         }
     }

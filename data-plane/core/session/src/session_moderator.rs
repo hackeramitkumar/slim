@@ -22,14 +22,15 @@ use tokio::sync::oneshot;
 
 use display_error_chain::ErrorChainExt;
 use slim_mls::mls::Mls;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     common::{MessageDirection, SessionMessage},
     errors::SessionError,
     mls_state::{MlsModeratorState, MlsState},
     moderator_task::{
-        AddParticipant, ModeratorTask, NotifyParticipants, RemoveParticipant, TaskUpdate,
+        AddParticipant, MigrateCipherSuite, ModeratorTask, NotifyParticipants, RemoveParticipant,
+        TaskUpdate,
     },
     session_controller::SessionControllerCommon,
     session_settings::SessionSettings,
@@ -390,6 +391,7 @@ where
                 ModeratorTask::Remove(t) => t.ack_tx,
                 ModeratorTask::Update(t) => t.ack_tx,
                 ModeratorTask::CloseOrDisconnect(t) => t.ack_tx,
+                ModeratorTask::Migrate(_) => None,
             };
             if let Some(tx) = ack_tx {
                 let _ = tx.send(Err(SessionError::cleanup_failed(&error)));
@@ -574,7 +576,8 @@ where
             | ProtoSessionMessageType::GroupRemove
             | ProtoSessionMessageType::GroupWelcome
             | ProtoSessionMessageType::GroupClose
-            | ProtoSessionMessageType::GroupNack => Err(
+            | ProtoSessionMessageType::GroupNack
+            | ProtoSessionMessageType::CipherMigration => Err(
                 SessionError::SessionMessageTypeUnexpected(message.get_session_message_type()),
             ),
             _ => Err(SessionError::SessionMessageTypeUnknown(
@@ -697,6 +700,113 @@ where
             "discovery phase complete",
         );
 
+        // Extract participant's supported cipher suites for MLS negotiation
+        let participant_cipher_suites: Vec<u32> = msg
+            .extract_discovery_reply()
+            .map(|reply| reply.supported_cipher_suites.clone())
+            .unwrap_or_default();
+
+        // Negotiate cipher suite if MLS is enabled
+        if let Some(mls_state) = &mut self.mls_state {
+            let group_exists = mls_state.common.mls.get_group_id().is_some();
+
+            if !participant_cipher_suites.is_empty() {
+                let participant_suites: Vec<slim_mls::CipherSuite> = participant_cipher_suites
+                    .iter()
+                    .map(|id| slim_mls::CipherSuite::new(*id as u16))
+                    .collect();
+
+                if group_exists {
+                    let group_suite = mls_state.common.mls.get_cipher_suite();
+                    if !participant_suites.contains(&group_suite) {
+                        // The participant doesn't support the group's current cipher suite.
+                        // Negotiate a common suite and trigger migration.
+                        let moderator_suites = slim_mls::mls::supported_cipher_suites();
+                        let common_suite = slim_mls::mls::negotiate_cipher_suite(
+                            &moderator_suites,
+                            &participant_suites,
+                        );
+                        match common_suite {
+                            Some(new_suite) => {
+                                info!(
+                                    from = group_suite.raw_value(),
+                                    to = new_suite.raw_value(),
+                                    "cipher suite migration required for existing group",
+                                );
+                                return self
+                                    .start_cipher_migration(msg, new_suite)
+                                    .await;
+                            }
+                            None => {
+                                let err = SessionError::MlsOp(
+                                    slim_mls::errors::MlsError::CipherSuiteNegotiationFailed {
+                                        moderator: moderator_suites
+                                            .iter()
+                                            .map(|cs| cs.raw_value())
+                                            .collect(),
+                                        participant: participant_suites
+                                            .iter()
+                                            .map(|cs| cs.raw_value())
+                                            .collect(),
+                                    },
+                                );
+                                return Err(self.handle_task_error(err));
+                            }
+                        }
+                    }
+                } else {
+                    // First participant: negotiate the best common cipher suite
+                    let moderator_suites = slim_mls::mls::supported_cipher_suites();
+                    match slim_mls::mls::negotiate_cipher_suite(
+                        &moderator_suites,
+                        &participant_suites,
+                    ) {
+                        Some(selected) => {
+                            let current = mls_state.common.mls.get_cipher_suite();
+                            if selected != current {
+                                info!(
+                                    from = current.raw_value(),
+                                    to = selected.raw_value(),
+                                    "re-initializing MLS with negotiated cipher suite",
+                                );
+                                #[cfg(not(mls_build_async))]
+                                mls_state
+                                    .common
+                                    .reinitialize_with_cipher_suite(selected)
+                                    .map_err(|e| self.handle_task_error(e))?;
+                                #[cfg(mls_build_async)]
+                                mls_state
+                                    .common
+                                    .reinitialize_with_cipher_suite(selected)
+                                    .await
+                                    .map_err(|e| self.handle_task_error(e))?;
+                            } else {
+                                info!(
+                                    cipher_suite = selected.raw_value(),
+                                    "cipher suite already matches",
+                                );
+                            }
+                        }
+                        None => {
+                            let err = SessionError::MlsOp(
+                                slim_mls::errors::MlsError::CipherSuiteNegotiationFailed {
+                                    moderator: moderator_suites
+                                        .iter()
+                                        .map(|cs| cs.raw_value())
+                                        .collect(),
+                                    participant: participant_suites
+                                        .iter()
+                                        .map(|cs| cs.raw_value())
+                                        .collect(),
+                                },
+                            );
+                            return Err(self.handle_task_error(err));
+                        }
+                    }
+                }
+            }
+        }
+
         // join the channel if needed
         info!(
             session_id = self.common.settings.id,
@@ -726,6 +836,13 @@ where
                 .await?;
         }
 
+        // Determine the selected cipher suite to communicate to the participant
+        let selected_cipher_suite = self
+            .mls_state
+            .as_ref()
+            .map(|mls| mls.common.mls.get_cipher_suite().raw_value() as u32)
+            .unwrap_or(0);
+
         // an endpoint replied to the discovery message
         // send a join message
         let msg_id = rand::random::<u32>();
@@ -742,12 +859,14 @@ where
                 self.common.settings.config.max_retries,
                 self.common.settings.config.interval,
                 channel,
+                selected_cipher_suite,
             )
             .as_content();
 
         debug!(
             dst = %msg.get_slim_header().get_source(),
             id = msg_id,
+            selected_cipher_suite,
             "send join request",
         );
         self.common
@@ -774,6 +893,11 @@ where
         );
         // stop the timer for the join request
         self.common.sender.on_message(&msg).await?;
+
+        // If the current task is a migration, route this as a migration key package
+        if matches!(self.current_task, Some(ModeratorTask::Migrate(_))) {
+            return self.on_cipher_migration_reply(msg).await;
+        }
 
         // evolve the current task state
         // the join phase is completed
@@ -884,6 +1008,252 @@ where
             .as_mut()
             .unwrap()
             .welcome_start(welcome_msg_id)?;
+
+        Ok(())
+    }
+
+    /// Start a cipher suite migration for an existing group.
+    ///
+    /// This is triggered when `on_discovery_reply` detects that a new
+    /// participant doesn't support the group's current cipher suite.
+    /// The moderator:
+    ///   1. Replaces the current `AddParticipant` task with a `Migrate` task.
+    ///   2. Sends a `CipherMigration` message to every existing participant
+    ///      telling them to tear down their MLS state, re-init with the new
+    ///      suite, and reply with a fresh key package (via `JoinReply`).
+    ///   3. Stashes the original `DiscoveryReply` message from the new
+    ///      participant so it can be re-processed after migration completes.
+    async fn start_cipher_migration(
+        &mut self,
+        original_msg: Message,
+        new_suite: slim_mls::CipherSuite,
+    ) -> Result<(), SessionError> {
+        let mut moderator_name = self.common.settings.source.clone();
+        moderator_name.reset_id();
+        let participants: Vec<Name> = self
+            .group_list
+            .iter()
+            .filter(|(name, _)| **name != moderator_name)
+            .map(|(name, id)| name.clone().with_id(*id))
+            .collect();
+
+        info!(
+            new_suite = new_suite.raw_value(),
+            participants_count = participants.len(),
+            "starting cipher suite migration",
+        );
+
+        // Replace the current Add task with a Migrate task
+        self.current_task = Some(ModeratorTask::Migrate(MigrateCipherSuite::new(
+            new_suite.raw_value(),
+            participants.clone(),
+        )));
+
+        // Stash the original message so we can re-process it after migration
+        self.postponed_message = Some(original_msg);
+
+        if participants.is_empty() {
+            // No existing participants to migrate; perform local migration and
+            // immediately re-process the stashed discovery reply.
+            if let Some(mls_state) = &mut self.mls_state {
+                #[cfg(not(mls_build_async))]
+                mls_state.recreate_group_with_cipher_suite(new_suite)?;
+                #[cfg(mls_build_async)]
+                mls_state.recreate_group_with_cipher_suite(new_suite).await?;
+            }
+            self.current_task = None;
+            if let Some(stashed) = self.postponed_message.take() {
+                return Box::pin(self.on_discovery_reply(stashed)).await;
+            }
+            return Ok(());
+        }
+
+        // Send CipherMigration to every existing participant
+        let payload = CommandPayload::builder()
+            .cipher_migration(new_suite.raw_value() as u32)
+            .as_content();
+        let migration_msg_id = rand::random::<u32>();
+
+        for participant in &participants {
+            debug!(
+                dst = %participant,
+                id = migration_msg_id,
+                "sending CipherMigration to participant",
+            );
+            self.common
+                .send_control_message(
+                    participant,
+                    ProtoSessionMessageType::CipherMigration,
+                    migration_msg_id,
+                    payload.clone(),
+                    None,
+                    false,
+                )
+                .await
+                .map_err(|e| self.handle_task_error(e))?;
+        }
+
+        // Track the migration request phase timer
+        self.current_task
+            .as_mut()
+            .unwrap()
+            .commit_start(migration_msg_id)?;
+
+        Ok(())
+    }
+
+    /// Handle a JoinReply that arrives while a `Migrate` task is in progress.
+    ///
+    /// Each existing participant, upon receiving the `CipherMigration` message,
+    /// tears down its MLS state, re-inits with the new cipher suite, generates
+    /// a fresh key package, and sends it back as a `JoinReply`.
+    ///
+    /// Once all expected key packages are collected the moderator:
+    ///   1. Recreates its own MLS group with the new cipher suite.
+    ///   2. Adds all participants to the new group.
+    ///   3. Sends commit/welcome messages to every participant.
+    ///   4. Re-processes the stashed discovery reply for the new participant.
+    async fn on_cipher_migration_reply(&mut self, msg: Message) -> Result<(), SessionError> {
+        let source = msg.get_source();
+
+        // Extract the key package from the JoinReply
+        let key_package = msg
+            .extract_join_reply()
+            .map_err(|e| {
+                let err = SessionError::extract_error("cipher_migration_reply", e);
+                self.handle_task_error(err)
+            })?
+            .key_package
+            .clone()
+            .unwrap_or_default();
+
+        info!(
+            source = %source,
+            key_package_len = key_package.len(),
+            "received migration key package",
+        );
+
+        // Record the key package in the Migrate task
+        let all_collected = match &mut self.current_task {
+            Some(ModeratorTask::Migrate(migrate)) => {
+                migrate.record_key_package(source.clone(), key_package)
+            }
+            _ => {
+                warn!("received migration reply but no Migrate task is active");
+                return Ok(());
+            }
+        };
+
+        if !all_collected {
+            return Ok(());
+        }
+
+        // Mark migration request phase as complete
+        let migration_timer_id = match &self.current_task {
+            Some(ModeratorTask::Migrate(m)) => m.migration_timer.timer_id,
+            _ => unreachable!(),
+        };
+        self.current_task
+            .as_mut()
+            .unwrap()
+            .update_phase_completed(migration_timer_id)?;
+
+        // All key packages collected — recreate the MLS group
+        let (new_suite, key_packages) = match &self.current_task {
+            Some(ModeratorTask::Migrate(m)) => (
+                slim_mls::CipherSuite::new(m.new_cipher_suite),
+                m.key_packages.clone(),
+            ),
+            _ => unreachable!(),
+        };
+
+        info!(
+            new_suite = new_suite.raw_value(),
+            members = key_packages.len(),
+            "all key packages collected, recreating MLS group",
+        );
+
+        if let Some(mls_state) = &mut self.mls_state {
+            #[cfg(not(mls_build_async))]
+            mls_state.recreate_group_with_cipher_suite(new_suite)?;
+            #[cfg(mls_build_async)]
+            mls_state.recreate_group_with_cipher_suite(new_suite).await?;
+
+            // Add each participant back to the new group and send them welcomes
+            for (name, kp) in &key_packages {
+                let ret = {
+                    #[cfg(not(mls_build_async))]
+                    {
+                        mls_state.common.mls.add_member(kp)?
+                    }
+                    #[cfg(mls_build_async)]
+                    {
+                        mls_state.common.mls.add_member(kp).await?
+                    }
+                };
+
+                mls_state.participants.insert(name.clone(), ret.member_identity);
+
+                // Build participants list for the welcome
+                let participants_vec: Vec<Name> = self
+                    .group_list
+                    .iter()
+                    .map(|(n, id)| n.clone().with_id(*id))
+                    .collect();
+
+                let commit_id = mls_state.get_next_mls_mgs_id();
+                let welcome_payload = CommandPayload::builder()
+                    .group_welcome(
+                        participants_vec,
+                        Some(MlsPayload {
+                            commit_id,
+                            mls_content: ret.welcome_message,
+                        }),
+                    )
+                    .as_content();
+
+                let welcome_msg_id = rand::random::<u32>();
+                debug!(
+                    dst = %name,
+                    id = welcome_msg_id,
+                    "sending welcome to migrated participant",
+                );
+                self.common
+                    .send_control_message(
+                        name,
+                        ProtoSessionMessageType::GroupWelcome,
+                        welcome_msg_id,
+                        welcome_payload,
+                        None,
+                        false,
+                    )
+                    .await?;
+            }
+        }
+
+        // Mark welcome phase
+        let welcome_timer_id = rand::random::<u32>();
+        self.current_task
+            .as_mut()
+            .unwrap()
+            .commit_start(welcome_timer_id)?;
+        self.current_task
+            .as_mut()
+            .unwrap()
+            .update_phase_completed(welcome_timer_id)?;
+
+        // Migration complete — clear the task and re-process the stashed
+        // discovery reply so the new participant can be added normally.
+        info!("cipher suite migration complete");
+        self.current_task = None;
+        if let Some(stashed) = self.postponed_message.take() {
+            // Create a new AddParticipant task and pre-set the discovery
+            // phase so that `on_discovery_reply` can call `discovery_complete`.
+            let mut task = AddParticipant::new(None, None);
+            task.discovery_start(stashed.get_id())?;
+            self.current_task = Some(ModeratorTask::Add(task));
+            return Box::pin(self.on_discovery_reply(stashed)).await;
+        }
 
         Ok(())
     }
@@ -1587,6 +1957,7 @@ mod tests {
                         Some(3),
                         Some(std::time::Duration::from_secs(1)),
                         None,
+                        0,
                     )
                     .as_content(),
             )

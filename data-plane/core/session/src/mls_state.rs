@@ -59,6 +59,37 @@ where
         })
     }
 
+    /// Re-initialize the MLS client with a different cipher suite.
+    /// Must be called before any group is created or joined.
+    #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
+    #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
+    pub(crate) async fn reinitialize_with_cipher_suite(
+        &mut self,
+        cipher_suite: slim_mls::CipherSuite,
+    ) -> Result<(), SessionError> {
+        self.mls.set_cipher_suite(cipher_suite);
+        self.mls.initialize().await?;
+        Ok(())
+    }
+
+    /// Reset the participant-side MLS state for a cipher suite migration.
+    /// Destroys the existing group, re-initializes with the new suite, and
+    /// clears buffered commits/proposals so the participant is ready to
+    /// receive a fresh welcome for the migrated group.
+    #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
+    #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
+    pub(crate) async fn reset_for_migration(
+        &mut self,
+        new_cipher_suite: slim_mls::CipherSuite,
+    ) -> Result<(), SessionError> {
+        self.mls.destroy_group();
+        self.reinitialize_with_cipher_suite(new_cipher_suite).await?;
+        self.last_mls_msg_id = 0;
+        self.stored_commits_proposals.clear();
+        self.group.clear();
+        Ok(())
+    }
+
     #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
     #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
     pub(crate) async fn generate_key_package(&mut self) -> Result<KeyPackageMsg, SessionError> {
@@ -307,6 +338,11 @@ where
             return Ok(());
         }
 
+        if !self.mls.has_group() {
+            trace!("MLS group not yet established, skipping encryption");
+            return Ok(());
+        }
+
         let payload = msg.get_payload().unwrap().as_application_payload()?;
 
         debug!("Encrypting message for group member");
@@ -331,6 +367,11 @@ where
     #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
     async fn decrypt_message(&mut self, msg: &mut Message) -> Result<(), SessionError> {
         if !Self::should_process_message(msg) {
+            return Ok(());
+        }
+
+        if !self.mls.has_group() {
+            trace!("MLS group not yet established, skipping decryption");
             return Ok(());
         }
 
@@ -453,6 +494,28 @@ where
     pub(crate) fn get_next_mls_mgs_id(&mut self) -> u32 {
         self.next_msg_id += 1;
         self.next_msg_id
+    }
+
+    /// Tear down the existing MLS group, switch to a new cipher suite,
+    /// re-initialize the client, and create a fresh group. This is used
+    /// during cipher suite migration when an incompatible participant joins.
+    #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
+    #[cfg_attr(mls_build_async, maybe_async::must_be_async)]
+    pub(crate) async fn recreate_group_with_cipher_suite(
+        &mut self,
+        new_cipher_suite: slim_mls::CipherSuite,
+    ) -> Result<(), SessionError> {
+        self.common.mls.destroy_group();
+        self.common
+            .reinitialize_with_cipher_suite(new_cipher_suite)
+            .await?;
+        self.common.mls.create_group().await?;
+        self.next_msg_id = 0;
+        self.participants.clear();
+        self.common.last_mls_msg_id = 0;
+        self.common.stored_commits_proposals.clear();
+        self.common.group.clear();
+        Ok(())
     }
 }
 
@@ -624,5 +687,106 @@ mod tests {
                 .blob,
             original_payload
         );
+    }
+
+    #[tokio::test]
+    async fn test_reset_for_migration() {
+        let mut mls = Mls::new(
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+        );
+        mls.initialize().unwrap();
+
+        let mut state = MlsState {
+            mls,
+            group: vec![1, 2, 3],
+            last_mls_msg_id: 5,
+            stored_commits_proposals: BTreeMap::new(),
+        };
+
+        let original_suite = state.mls.get_cipher_suite();
+
+        // reset_for_migration tears down and re-initializes
+        state.reset_for_migration(original_suite).unwrap();
+
+        assert_eq!(state.last_mls_msg_id, 0);
+        assert!(state.stored_commits_proposals.is_empty());
+        assert!(state.group.is_empty());
+        assert!(!state.mls.has_group());
+
+        // Should be able to generate a key package after migration
+        let kp = state.generate_key_package().unwrap();
+        assert!(!kp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_moderator_recreate_group_with_cipher_suite() {
+        let mut alice_mls = Mls::new(
+            SharedSecret::new("alice", TEST_VALID_SECRET).unwrap(),
+            SharedSecret::new("alice", TEST_VALID_SECRET).unwrap(),
+        );
+        let mut bob_mls = Mls::new(
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+        );
+
+        alice_mls.initialize().unwrap();
+        bob_mls.initialize().unwrap();
+
+        // Set up an initial group with alice as moderator and bob as participant
+        let _group_id = alice_mls.create_group().unwrap();
+        let bob_kp = bob_mls.generate_key_package().unwrap();
+        let add_res = alice_mls.add_member(&bob_kp).unwrap();
+        bob_mls.process_welcome(&add_res.welcome_message).unwrap();
+
+        let bob_name = Name::from_strings(["org", "ns", "bob"]).with_id(1);
+
+        let alice_state = MlsState {
+            mls: alice_mls,
+            group: vec![1, 2, 3],
+            last_mls_msg_id: 3,
+            stored_commits_proposals: BTreeMap::new(),
+        };
+
+        let mut moderator_state = MlsModeratorState::new(alice_state);
+        moderator_state
+            .participants
+            .insert(bob_name, vec![0u8; 32]);
+
+        let suite = moderator_state.common.mls.get_cipher_suite();
+
+        // Recreate the group with the same cipher suite (simulating migration)
+        moderator_state
+            .recreate_group_with_cipher_suite(suite)
+            .unwrap();
+
+        assert_eq!(moderator_state.next_msg_id, 0);
+        assert!(moderator_state.participants.is_empty());
+        assert!(moderator_state.common.group.is_empty());
+        assert!(moderator_state.common.mls.has_group());
+
+        // Bob re-initializes and generates a new key package
+        bob_mls = Mls::new(
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+            SharedSecret::new("bob", TEST_VALID_SECRET).unwrap(),
+        );
+        bob_mls.initialize().unwrap();
+        let bob_kp2 = bob_mls.generate_key_package().unwrap();
+
+        // Alice (moderator) can add Bob back to the new group
+        let add_res2 = moderator_state.common.mls.add_member(&bob_kp2).unwrap();
+        bob_mls
+            .process_welcome(&add_res2.welcome_message)
+            .unwrap();
+
+        // Verify end-to-end encryption works in the new group
+        let plaintext = b"message after migration";
+        let encrypted = moderator_state
+            .common
+            .mls
+            .encrypt_message(plaintext)
+            .unwrap();
+        let decrypted = bob_mls.decrypt_message(&encrypted).unwrap();
+        assert_eq!(plaintext.as_slice(), decrypted.as_slice());
     }
 }

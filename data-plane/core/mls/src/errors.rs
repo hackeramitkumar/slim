@@ -28,6 +28,13 @@ pub enum MlsError {
     // Ciphersuite / client / group lifecycle
     #[error("requested ciphersuite is unavailable")]
     CiphersuiteUnavailable,
+    #[error("cipher suite negotiation failed: no common cipher suite between moderator and participant (moderator: {moderator:?}, participant: {participant:?})")]
+    CipherSuiteNegotiationFailed {
+        moderator: Vec<u16>,
+        participant: Vec<u16>,
+    },
+    #[error("participant does not support the group cipher suite {group_suite}")]
+    CipherSuiteNotSupported { group_suite: u16 },
     #[error("mls client not initialized")]
     ClientNotInitialized,
     #[error("mls group does not exist")]

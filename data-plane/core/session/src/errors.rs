@@ -71,7 +71,7 @@ pub enum SessionError {
     InvalidSessionId(u32),
 
     // Cryptography (MLS)
-    #[error("mls operation error")]
+    #[error("mls operation error: {0}")]
     MlsOp(#[from] MlsError),
 
     // Authorization and roles
@@ -162,6 +162,8 @@ pub enum SessionError {
     ModeratorTaskUpdateFailed { source: Box<SessionError> },
     #[error("failed to close session")]
     ModeratorTaskCloseFailed { source: Box<SessionError> },
+    #[error("failed to migrate cipher suite")]
+    ModeratorTaskMigrateFailed { source: Box<SessionError> },
 }
 
 impl SessionError {

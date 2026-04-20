@@ -14,7 +14,7 @@ use slim_datapath::{
 };
 
 use slim_mls::mls::Mls;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     common::SessionMessage,
@@ -317,6 +317,9 @@ where
                 self.on_leave_request(message).await
             }
             ProtoSessionMessageType::Ping => self.on_ping(message).await,
+            ProtoSessionMessageType::CipherMigration => {
+                self.on_cipher_migration(message).await
+            }
             ProtoSessionMessageType::LeaveReply => {
                 // this message is received when the moderator ack the
                 // reception of the leave request sent on Drain start
@@ -361,6 +364,30 @@ where
             .add_route(source.clone(), msg.get_incoming_conn())
             .await?;
 
+        // If the moderator selected a cipher suite, apply it before generating
+        // the key package so the participant uses the group's cipher suite.
+        if let Some(mls_state) = &mut self.mls_state {
+            let join_payload = msg.extract_join_request();
+            if let Ok(join) = &join_payload {
+                let selected = join.selected_cipher_suite;
+                if selected != 0 {
+                    let selected_suite = slim_mls::CipherSuite::new(selected as u16);
+                    let current_suite = mls_state.mls.get_cipher_suite();
+                    if selected_suite != current_suite {
+                        debug!(
+                            from = current_suite.raw_value(),
+                            to = selected_suite.raw_value(),
+                            "re-initializing MLS with moderator-selected cipher suite",
+                        );
+                        #[cfg(not(mls_build_async))]
+                        mls_state.reinitialize_with_cipher_suite(selected_suite)?;
+                        #[cfg(mls_build_async)]
+                        mls_state.reinitialize_with_cipher_suite(selected_suite).await?;
+                    }
+                }
+            }
+        }
+
         let payload = if let Some(mls_state) = &mut self.mls_state {
             debug!("mls enabled, create the package key");
             #[cfg(not(mls_build_async))]
@@ -375,6 +402,56 @@ where
         let content = CommandPayload::builder().join_reply(payload).as_content();
 
         debug!("send join reply message");
+        let reply = self.common.create_control_message(
+            &source,
+            ProtoSessionMessageType::JoinReply,
+            msg.get_id(),
+            content,
+            false,
+        )?;
+
+        self.common.send_to_slim(reply).await
+    }
+
+    /// Handle a CipherMigration message from the moderator.
+    ///
+    /// The moderator sends this when a new participant requires a different
+    /// cipher suite. This participant must:
+    ///   1. Tear down its current MLS group state.
+    ///   2. Re-initialize with the new cipher suite.
+    ///   3. Generate a fresh key package.
+    ///   4. Reply to the moderator with a JoinReply containing the new key package.
+    async fn on_cipher_migration(&mut self, msg: Message) -> Result<(), SessionError> {
+        let source = msg.get_source();
+        let migration_payload = msg.extract_cipher_migration().map_err(|e| {
+            SessionError::extract_error("cipher_migration", e)
+        })?;
+        let new_suite_raw = migration_payload.new_cipher_suite;
+        let new_suite = slim_mls::CipherSuite::new(new_suite_raw as u16);
+
+        info!(
+            new_suite = new_suite_raw,
+            "received cipher migration request, re-initializing MLS",
+        );
+
+        let payload = if let Some(mls_state) = &mut self.mls_state {
+            #[cfg(not(mls_build_async))]
+            mls_state.reset_for_migration(new_suite)?;
+            #[cfg(mls_build_async)]
+            mls_state.reset_for_migration(new_suite).await?;
+
+            #[cfg(not(mls_build_async))]
+            let key = mls_state.generate_key_package()?;
+            #[cfg(mls_build_async)]
+            let key = mls_state.generate_key_package().await?;
+            Some(key)
+        } else {
+            None
+        };
+
+        let content = CommandPayload::builder().join_reply(payload).as_content();
+
+        debug!("sending migration key package as JoinReply");
         let reply = self.common.create_control_message(
             &source,
             ProtoSessionMessageType::JoinReply,
@@ -796,6 +873,7 @@ mod tests {
                         Some(3),
                         Some(std::time::Duration::from_secs(1)),
                         None,
+                        0,
                     )
                     .as_content(),
             )
@@ -1073,6 +1151,7 @@ mod tests {
                         Some(3),
                         Some(std::time::Duration::from_secs(1)),
                         None,
+                        0,
                     )
                     .as_content(),
             )
