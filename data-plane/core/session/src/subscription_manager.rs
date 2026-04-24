@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::future::Either;
-use futures_timer::Delay;
 use parking_lot::Mutex;
 use thiserror::Error;
 use tokio::sync::oneshot;
@@ -438,14 +437,13 @@ impl SubscriptionManager {
 
     /// Await a previously registered ACK receiver, with a deadline of [`ACK_TIMEOUT`].
     ///
-    /// Uses [`futures_timer::Delay`] rather than `tokio::time::timeout` so that
-    /// this function works correctly outside a Tokio runtime with the time driver
-    /// enabled (e.g. when called from UniFFI async bindings).
+    /// Uses `tokio::time::sleep` which resolves to `tokio_with_wasm::time::sleep`
+    /// on WASM targets via the `extern crate` alias in `lib.rs`.
     pub async fn await_ack(
         ack_rx: oneshot::Receiver<Result<(), SubscriptionAckError>>,
     ) -> Result<(), SubscriptionAckError> {
         futures::pin_mut!(ack_rx);
-        let delay = Delay::new(ACK_TIMEOUT);
+        let delay = tokio::time::sleep(ACK_TIMEOUT);
         futures::pin_mut!(delay);
 
         match futures::future::select(ack_rx, delay).await {
